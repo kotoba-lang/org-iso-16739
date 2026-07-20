@@ -6,4 +6,7 @@
 (def entity-types impl/entity-types)
 (def exchange-document impl/exchange-document)
 (def write-spf impl/write-spf)
+(def semantic-fingerprint impl/semantic-fingerprint)
+(def roundtrip-report impl/roundtrip-report)
+(def corpus-report impl/corpus-report)
 (def read-spf impl/read-spf)

@@ -244,3 +244,32 @@
     (is (= 8 (count (get-in nurbs-edge [:geometry :faces 0 :bounds 0 :points]))))
     (is (= [0.0 0.0 0.0]
            (first (get-in nurbs-edge [:geometry :faces 0 :bounds 0 :points]))))))
+
+(deftest external-revit-fixture-is-semantically-lossless-after-standard-ifc-rewrite
+  #?(:clj
+     (let [text (slurp (io/file "test/fixtures/revit-wall.ifc"))
+           report (ifc/roundtrip-report text)
+           rewritten (:roundtrip/output report)]
+       (is (= "IFC4X3_ADD2" (:roundtrip/input-schema report)))
+       (is (= "IFC4X3_ADD2" (:roundtrip/output-schema report)))
+       (is (= 12 (:roundtrip/input-elements report)))
+       (is (= 12 (:roundtrip/output-elements report)))
+       (is (string/includes? rewritten "IFCMAPPEDITEM"))
+       (is (string/includes? rewritten "IFCBOOLEANRESULT"))
+       (is (string/includes? rewritten "IFCPOLYGONALFACESET"))
+       (is (string/includes? rewritten "IFCEDGELOOP"))
+       (is (string/includes? rewritten "IFCRATIONALBSPLINECURVEWITHKNOTS"))
+       (is (:roundtrip/lossless? report)
+           (pr-str {:expected (:roundtrip/expected report)
+                    :actual (:roundtrip/actual report)})))
+     :cljs (is true)))
+
+(deftest corpus-report-aggregates-external-roundtrip-evidence
+  #?(:clj
+     (let [text (slurp (io/file "test/fixtures/revit-wall.ifc"))
+           report (ifc/corpus-report {"revit-wall" text})]
+       (is (:corpus/lossless? report))
+       (is (= 1 (:corpus/file-count report)))
+       (is (= 12 (:corpus/input-elements report)))
+       (is (= (:corpus/input-elements report) (:corpus/output-elements report))))
+     :cljs (is true)))
