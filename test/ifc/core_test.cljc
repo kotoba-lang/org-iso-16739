@@ -14,6 +14,26 @@
     (is (string/includes? text "IFCWALL"))
     (is (= model (ifc/read-spf text)))))
 
+(deftest swept-profile-position-survives-standard-rewrite
+  (let [profile-position {:location [2.5 -1.25] :ref-direction [0.0 1.0]}
+        document (ifc/exchange-document
+                  {:project {:global-id "profile-project" :name "Profile Position"}
+                   :elements [{:id 10 :global-id "positioned-profile" :kind :beam
+                               :name "Offset Profile"
+                               :geometry {:kind :extruded-area-solid
+                                          :profile {:kind :rectangle
+                                                    :profile-type :area :name :$
+                                                    :position profile-position
+                                                    :x-dim 0.4 :y-dim 0.8}
+                                          :position {:location [0.0 0.0 0.0]}
+                                          :direction [0.0 0.0 1.0] :depth 5.0}}]})
+        output (ifc/write-spf document)
+        reimported (ifc/read-document output)]
+    (is (string/includes? output "IFCAXIS2PLACEMENT2D"))
+    (is (= profile-position
+           (get-in reimported [:ifc/elements 0 :geometry :profile :position])))
+    (is (:roundtrip/lossless? (ifc/roundtrip-report output)))))
+
 (deftest standard-ifc-geometry-round-trip
   (let [document (ifc/exchange-document
                   {:project {:global-id "project-standard" :name "Standard Tower"

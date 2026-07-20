@@ -53,6 +53,10 @@
                        (point! (or (:location placement) [0.0 0.0 0.0]))
                        (direction! (or (:axis placement) [0.0 0.0 1.0]))
                        (direction! (or (:ref-direction placement) [1.0 0.0 0.0]))))
+        axis2! (fn [placement]
+                 (emit! :ifcaxis2placement2d
+                        (point! (or (:location placement) [0.0 0.0]))
+                        (direction! (or (:ref-direction placement) [1.0 0.0]))))
         axis1! (fn [placement]
                  (emit! :ifcaxis1placement
                         (point! (or (:location placement) [0.0 0.0 0.0]))
@@ -113,14 +117,23 @@
                    nil))
         profile! (fn [profile]
                    (case (:kind profile)
-                     :rectangle (emit! :ifcrectangleprofiledef :area
-                                       (or (:name profile) "Profile") :$
+                     :rectangle (emit! :ifcrectangleprofiledef
+                                       (or (:profile-type profile) :area)
+                                       (or (:name profile) "Profile")
+                                       (if-let [position (:position profile)]
+                                         (axis2! position) :$)
                                        (:x-dim profile) (:y-dim profile))
-                     :circle (emit! :ifccircleprofiledef :area
-                                    (or (:name profile) "Profile") :$
+                     :circle (emit! :ifccircleprofiledef
+                                    (or (:profile-type profile) :area)
+                                    (or (:name profile) "Profile")
+                                    (if-let [position (:position profile)]
+                                      (axis2! position) :$)
                                     (:radius profile))
-                     :i-shape (emit! :ifcishapeprofiledef :area
-                                     (or (:name profile) "Profile") :$
+                     :i-shape (emit! :ifcishapeprofiledef
+                                     (or (:profile-type profile) :area)
+                                     (or (:name profile) "Profile")
+                                     (if-let [position (:position profile)]
+                                       (axis2! position) :$)
                                      (:overall-width profile) (:overall-depth profile)
                                      (:web-thickness profile) (:flange-thickness profile)
                                      (or (:fillet-radius profile) :$)
