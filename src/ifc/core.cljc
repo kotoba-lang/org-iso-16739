@@ -436,9 +436,8 @@
                            [:typed value-type
                             (if (= :ifcboolean value-type) (if value :t :f) value)]))
         property-unit! (fn [unit] (if unit (unit! unit) :$))
-        psets! (fn [product-ref element]
-                 (doseq [[name pset] (:property-sets element)]
-                   (let [properties
+        property-set! (fn [owner-id name pset]
+                        (let [properties
                          (mapv
                           (fn [[property-name property]]
                             (let [description (or (:description property) :$)
@@ -483,8 +482,12 @@
                                        unit-ref))))
                           (:properties pset))
                          pset-ref (emit! :ifcpropertyset
-                                         (or (:global-id pset) (str "PSET_" (:id element) "_" name))
+                                         (or (:global-id pset) (str "PSET_" owner-id "_" name))
                                          :$ name :$ (list* properties))]
+                          pset-ref))
+        psets! (fn [product-ref element]
+                 (doseq [[name pset] (:property-sets element)]
+                   (let [pset-ref (property-set! (:id element) name pset)]
                      (emit! :ifcreldefinesbyproperties
                             (str "REL_PSET_" (:id element) "_" name) :$ :$ :$
                             (list* [product-ref]) pset-ref))))
@@ -492,13 +495,7 @@
                         :volume :ifcquantityvolume :count :ifcquantitycount
                         :weight :ifcquantityweight :time :ifcquantitytime
                         :number :ifcquantitynumber}
-        quantity-unit! (fn [unit]
-                         (if-not unit
-                           :$
-                           (case (:kind unit)
-                             :si (emit! :ifcsiunit :$ (:type unit)
-                                        (or (:prefix unit) :$) (:name unit))
-                             :$)))
+        quantity-unit! (fn [unit] (if unit (unit! unit) :$))
         qsets! (fn [product-ref element]
                  (doseq [[name qset] (:quantity-sets element)]
                    (let [quantities
@@ -583,12 +580,16 @@
                           (or (:tag element) :$) :$))
         type! (fn [product-ref element]
                 (when-let [type-object (:type-object element)]
-                  (let [type-ref (emit! (or (:ifc/type type-object)
+                  (let [type-psets (mapv (fn [[name pset]]
+                                           (property-set! (:id type-object) name pset))
+                                         (:property-sets type-object))
+                        type-ref (emit! (or (:ifc/type type-object)
                                             (get type-entity-types (:kind element)
                                                  :ifcbuildingelementproxytype))
                                         (or (:global-id type-object)
                                             (str "TYPE_" (:id type-object)))
-                                        :$ (:name type-object) :$ :$ :$ :$ :$
+                                        :$ (:name type-object) :$ :$
+                                        (if (seq type-psets) (list* type-psets) :$) :$ :$
                                         (or (:element-type type-object) :$)
                                         (or (:predefined-type type-object) :notdefined))]
                     (emit! :ifcreldefinesbytype
@@ -1719,12 +1720,18 @@
                            (ref-id (get-in relation [:args 5]))])
                         (filter #(= :ifcrelfillselement (:type %)) entities)))})
 
-(defn- type-relations [table entities]
+(defn- type-relations [table entities psets-by-id]
   (reduce (fn [by-object relation]
             (let [type-entity (referenced table (get-in relation [:args 5]))
                   type-object {:id (:id type-entity) :ifc/type (:type type-entity)
                                :global-id (get-in type-entity [:args 0])
                                :name (get-in type-entity [:args 2])
+                               :property-sets
+                               (into {}
+                                     (keep (fn [ref]
+                                             (when-let [pset (get psets-by-id (ref-id ref))]
+                                               [(:name pset) pset])))
+                                     (list-values (get-in type-entity [:args 5])))
                                :element-type (get-in type-entity [:args 8])
                                :predefined-type (get-in type-entity [:args 9])}]
               (reduce #(assoc %1 (ref-id %2) type-object) by-object
@@ -1872,7 +1879,24 @@
         qsets-by-object (quantity-sets table entities)
         materials (materials-by-object table entities)
         classifications (classifications-by-object table entities)
-        types-by-object (type-relations table entities)
+        psets-by-id
+        (into {}
+              (map (juxt :id identity)
+                   (map (fn [entity]
+                          (let [properties
+                                (into {}
+                                      (keep (fn [ref]
+                                              (when-let [p
+                                                         (property-value
+                                                          table (referenced table ref))]
+                                                [(:name p) p])))
+                                      (list-values (get-in entity [:args 4])))]
+                            {:id (:id entity) :global-id (get-in entity [:args 0])
+                             :name (get-in entity [:args 2])
+                             :description (get-in entity [:args 3])
+                             :properties properties}))
+                        (filter #(= :ifcpropertyset (:type %)) entities))))
+        types-by-object (type-relations table entities psets-by-id)
         presentation (presentation-indexes table entities)
         port-data (ports table entities)
         {:keys [voids fills]} (opening-relations entities)

@@ -760,6 +760,36 @@
     (is (= "RPM" (get-in imported [:ifc/units :frequencyunit :name])))
     (is (:roundtrip/lossless? (ifc/roundtrip-report output)))))
 
+(deftest type-property-sets-and-conversion-based-quantity-units-roundtrip
+  (let [foot {:kind :conversion-based :type :lengthunit :name "FOOT"
+              :dimensions [1 0 0 0 0 0 0]
+              :conversion-factor
+              {:value 0.3048 :value-type :ifclengthmeasure
+               :unit {:kind :si :type :lengthunit :name :metre}}}
+        document (ifc/exchange-document
+                  {:project {:global-id "typed-project" :name "Typed"}
+                   :elements
+                   [{:id 10 :global-id "typed-wall" :kind :wall :name "Wall"
+                     :type-object
+                     {:id 20 :global-id "wall-type" :name "Exterior 12in"
+                      :element-type "Basic Wall" :predefined-type :standard
+                      :property-sets
+                      {"Pset_WallTypeCommon"
+                       {:global-id "type-pset" :name "Pset_WallTypeCommon"
+                        :properties {"FireRating" {:kind :single :value "2h"
+                                                   :value-type :ifclabel}}}}}
+                     :quantity-sets
+                     {"Qto_WallBaseQuantities"
+                      {:quantities {"Length" {:kind :length :value 12.0 :unit foot}}}}}]})
+        output (ifc/rewrite-spf document)
+        wall (first (:ifc/elements (ifc/read-document output)))]
+    (is (= "2h" (get-in wall [:type-object :property-sets
+                               "Pset_WallTypeCommon" :properties
+                               "FireRating" :value])))
+    (is (= "FOOT" (get-in wall [:quantity-sets "Qto_WallBaseQuantities"
+                                 :quantities "Length" :unit :name])))
+    (is (:roundtrip/lossless? (ifc/roundtrip-report output)))))
+
 (deftest hybrid-export-splices-edited-geometry-without-dropping-unknown-entities
   #?(:clj
      (let [fixture (slurp (io/file "test/fixtures/revit-wall.ifc"))
