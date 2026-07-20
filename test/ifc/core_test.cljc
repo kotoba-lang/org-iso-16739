@@ -73,7 +73,21 @@
                     {:id 15 :global-id "round-standard" :kind :column :name "Round Column"
                      :geometry {:kind :extruded-area-solid
                                 :profile {:kind :circle :radius 0.3}
-                                :direction [0 0 1] :depth 3.5}}]})
+                                :direction [0 0 1] :depth 3.5}}
+                    {:id 16 :global-id "advanced-standard" :kind :proxy :name "Advanced Body"
+                     :geometry {:kind :advanced-brep
+                                :faces [{:same-sense true
+                                         :surface {:kind :plane
+                                                   :position {:location [0 0 0]}}
+                                         :bounds [{:kind :outer :orientation true
+                                                   :points [[0 0 0] [3 0 0] [3 2 0] [0 2 0]]}]}
+                                        {:same-sense true
+                                         :surface {:kind :cylinder :radius 1.5
+                                                   :position {:location [0 0 0]
+                                                              :axis [0 0 1]}}
+                                         :bounds [{:kind :outer :orientation true
+                                                   :points [[1.5 0 0] [1.5 0 2]
+                                                            [-1.5 0 2] [-1.5 0 0]]}]}]}}]})
         text (ifc/write-spf document)
         imported (ifc/read-document text)
         by-name (into {} (map (juxt :name identity) (:ifc/elements imported)))]
@@ -82,6 +96,8 @@
     (is (string/includes? text "IFCTRIANGULATEDFACESET"))
     (is (string/includes? text "IFCSWEPTDISKSOLID"))
     (is (string/includes? text "IFCCIRCLEPROFILEDEF"))
+    (is (string/includes? text "IFCADVANCEDBREP"))
+    (is (string/includes? text "IFCCYLINDRICALSURFACE"))
     (is (= :external-spf (:ifc/source imported)))
     (is (= "Standard Tower" (get-in imported [:ifc/project :name])))
     (is (= "Tokyo Site" (get-in imported [:ifc/project :children 0 :name])))
@@ -118,7 +134,11 @@
     (is (= :faceted-brep (get-in by-name ["Tetrahedron" :geometry :kind])))
     (is (= [[1 2 3]] (get-in by-name ["Tessellated" :geometry :coord-indices])))
     (is (= :swept-disk-solid (get-in by-name ["Pipe" :geometry :kind])))
-    (is (= :circle (get-in by-name ["Round Column" :geometry :profile :kind])))))
+    (is (= :circle (get-in by-name ["Round Column" :geometry :profile :kind])))
+    (is (= :advanced-brep (get-in by-name ["Advanced Body" :geometry :kind])))
+    (is (= :plane (get-in by-name ["Advanced Body" :geometry :faces 0 :surface :kind])))
+    (is (= :cylinder (get-in by-name ["Advanced Body" :geometry :faces 1 :surface :kind])))
+    (is (= 1.5 (get-in by-name ["Advanced Body" :geometry :faces 1 :surface :radius])))))
 
 (deftest reads-external-spatial-hierarchy-and-extrusion
   (let [text #?(:clj (slurp (io/file "test/fixtures/revit-wall.ifc")) :cljs "")
