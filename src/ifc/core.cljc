@@ -19,7 +19,8 @@
    :railing :ifcrailing :curtain :ifccurtainwall
    :mep-segment :ifcdistributionflowelement
    :duct-segment :ifcductsegment :pipe-segment :ifcpipesegment
-   :air-terminal :ifcairterminal :flow-fitting :ifcflowfitting
+   :air-terminal :ifcairterminal :sanitary-terminal :ifcsanitaryterminal
+   :flow-fitting :ifcflowfitting
    :flow-controller :ifcflowcontroller :flow-moving-device :ifcflowmovingdevice
    :footing :ifcfooting :pile :ifcpile :member :ifcmember :plate :ifcplate
    :opening :ifcopeningelement :proxy :ifcbuildingelementproxy})
@@ -30,6 +31,7 @@
    :railing :ifcrailingtype :curtain :ifccurtainwalltype
    :duct-segment :ifcductsegmenttype
    :pipe-segment :ifcpipesegmenttype :air-terminal :ifcairterminaltype
+   :sanitary-terminal :ifcsanitaryterminaltype
    :footing :ifcfootingtype :pile :ifcpiletype :member :ifcmembertype
    :plate :ifcplatetype :proxy :ifcbuildingelementproxytype})
 

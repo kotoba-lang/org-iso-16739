@@ -1,6 +1,7 @@
 (ns ifc.core-test
   (:require [clojure.string :as string]
             [clojure.test :refer [deftest is]]
+            #?(:clj [clojure.edn :as edn])
             #?(:clj [clojure.java.io :as io])
             [ifc.core :as ifc]))
 
@@ -942,3 +943,34 @@
     (is (= 4.0 (get-in by-global ["added-product" :geometry :depth])))
     (is (nil? (get by-global "deleted-product")))
     (is (string/includes? output "'Keep Graph Data'"))))
+
+(deftest official-buildingsmart-corpus-is-semantically-lossless
+  #?(:clj
+     (let [root (io/file "test/fixtures/external")
+           manifest (edn/read-string (slurp (io/file root "manifest.edn")))
+           results
+           (mapv (fn [{:keys [file] expected-schema :expected/schema
+                       expected-products :expected/products}]
+                   (let [report (ifc/roundtrip-report (slurp (io/file root file)))]
+                     (is (= expected-schema (:roundtrip/input-schema report)) file)
+                     (is (= expected-products (:roundtrip/input-elements report)) file)
+                     (is (= expected-products (:roundtrip/output-elements report)) file)
+                     (is (:roundtrip/lossless? report)
+                         (pr-str {:file file :expected (:roundtrip/expected report)
+                                  :actual (:roundtrip/actual report)}))
+                     [file report]))
+                 (:fixtures manifest))
+           corpus (ifc/corpus-report
+                   (into {} (map (fn [[file _]]
+                                   [file (slurp (io/file root file))])) results))
+           basin (ifc/read-document
+                  (slurp (io/file root "buildingSMART-basin-tessellation.ifc")))]
+       (is (= "CC-BY-4.0" (:source/license manifest)))
+       (is (= 5 (:corpus/file-count corpus)))
+       (is (= 6 (:corpus/input-elements corpus)))
+       (is (:corpus/lossless? corpus))
+       (is (= :sanitary-terminal (get-in basin [:ifc/elements 0 :kind])))
+       (is (= :mapped-item (get-in basin [:ifc/elements 0 :geometry :kind])))
+       (is (= :triangulated-face-set
+              (get-in basin [:ifc/elements 0 :geometry :source :kind]))))
+     :cljs (is true)))

@@ -1,7 +1,7 @@
 {:paths ["src"]
  :deps {io.github.kotoba-lang/org-iso-10303
         {:git/url "https://github.com/kotoba-lang/org-iso-10303.git"
-         :git/sha "1e5c7d1bf4e9343bc012d56662228173da6f6082"}}
+         :git/sha "50bd6c235ea0f6dad600a75745d7c807dab98884"}}
  :aliases {:test {:extra-paths ["test"]
                   :extra-deps {io.github.cognitect-labs/test-runner
                                {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
