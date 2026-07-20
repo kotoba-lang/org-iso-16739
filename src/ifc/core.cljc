@@ -31,6 +31,8 @@
    :footing :ifcfootingtype :pile :ifcpiletype :member :ifcmembertype
    :plate :ifcplatetype :proxy :ifcbuildingelementproxytype})
 
+(def group-types #{:ifcgroup :ifcsystem :ifcdistributionsystem :ifczone})
+
 (defn exchange-document [{:keys [project elements]}]
   {:ifc/schema schema :ifc/contract-version contract-version
    :ifc/project project :ifc/elements (vec elements)})
@@ -566,7 +568,7 @@
                                     imported-type
                                     (or kind-type :ifcbuildingelementproxy))
                       ref (product! element entity-type)]
-                  (swap! product-by-source assoc (:id element) ref)
+                  (swap! product-by-source assoc (:id element) ref (:global-id element) ref)
                   (psets! ref element)
                   (qsets! ref element)
                   (material-association! ref element)
@@ -598,6 +600,58 @@
             (when-let [fill-ref (get @product-by-source (:filled-by opening))]
               (emit! :ifcrelfillselement (str "REL_FILL_" (:id opening))
                      :$ :$ :$ opening-ref fill-ref))))
+        port-by-source (atom {})
+        _ports
+        (doseq [element elements port (:ports element)]
+          (let [port-ref
+                (emit! :ifcdistributionport
+                       (or (:global-id port) (str "PORT_" (:id port))) :$
+                       (:name port) (or (:description port) :$)
+                       (or (:object-type port) :$) (local! (:placement port)) :$
+                       (or (:tag port) :$) (or (:flow-direction port) :notdefined)
+                       (or (:predefined-type port) :notdefined)
+                       (or (:system-type port) :notdefined))
+                element-ref (get @product-by-source (:id element))]
+            (swap! port-by-source assoc (:id port) port-ref (:global-id port) port-ref)
+            (emit! :ifcrelnests (str "REL_PORT_" (:id element) "_" (:id port))
+                   :$ :$ :$ element-ref (list* [port-ref]))))
+        group-by-source (atom {})
+        _groups
+        (doseq [group (:ifc/groups document)]
+          (let [group-ref
+                (case (:kind group)
+                  :zone (emit! :ifczone (or (:global-id group) (str "ZONE_" (:id group)))
+                               :$ (:name group) (or (:description group) :$)
+                               (or (:object-type group) :$) (or (:long-name group) :$))
+                  :distribution-system
+                  (emit! :ifcdistributionsystem
+                         (or (:global-id group) (str "SYSTEM_" (:id group))) :$
+                         (:name group) (or (:description group) :$)
+                         (or (:object-type group) :$) (or (:long-name group) :$)
+                         (or (:predefined-type group) :notdefined))
+                  (emit! :ifcsystem (or (:global-id group) (str "SYSTEM_" (:id group)))
+                         :$ (:name group) (or (:description group) :$)
+                         (or (:object-type group) :$)))
+                members (keep #(or (get @product-by-source %)
+                                   (get @port-by-source %))
+                              (concat (:member-ids group) (:member-global-ids group)))]
+            (swap! group-by-source assoc (:id group) group-ref (:global-id group) group-ref)
+            (when (seq members)
+              (emit! :ifcrelassignstogroup (str "REL_GROUP_" (:id group)) :$ :$ :$
+                     (list* members) :$ group-ref))))
+        _connections
+        (doseq [connection (:ifc/connections document)]
+          (let [relating (or (get @port-by-source (:relating-port-id connection))
+                             (get @port-by-source (:relating-port-global-id connection)))
+                related (or (get @port-by-source (:related-port-id connection))
+                            (get @port-by-source (:related-port-global-id connection)))
+                realizing (or (get @product-by-source (:realizing-element-id connection))
+                              (get @product-by-source (:realizing-element-global-id connection)) :$)]
+            (when (and relating related)
+              (emit! :ifcrelconnectsports
+                     (or (:global-id connection) (str "REL_CONNECT_" (:id connection)))
+                     :$ (:name connection) (or (:description connection) :$)
+                     relating related realizing))))
         _payload (when (some? (:model project))
             (emit! :ifcpropertysinglevalue "KOTOBA_MODEL_EDN" :$
                    [:typed :ifctext (pr-str (:model project))] :$))]
@@ -644,8 +698,10 @@
                         generated-vectors)
         generated-table (into {} (map (juxt :id identity)) generated)
         spatial-types #{:ifcproject :ifcsite :ifcbuilding :ifcbuildingstorey :ifcspace}
+        grouped-or-port-types (conj group-types :ifcdistributionport)
         product-or-spatial? #(or (contains? product-types (:type %))
-                                 (contains? spatial-types (:type %)))
+                                 (contains? spatial-types (:type %))
+                                 (contains? grouped-or-port-types (:type %)))
         relationship? #(string/starts-with? (name (:type %)) "ifcrel")
         by-global (fn [entities]
                     (into {} (keep (fn [entity]
@@ -662,13 +718,15 @@
         matched-raw-ids (set (map (comp :id first) matched))
         matched-generated-ids (set (map (comp :id second) matched))
         deleted (keep (fn [[global-id entity]]
-                        (when (and (contains? product-types (:type entity))
+                        (when (and (or (contains? product-types (:type entity))
+                                       (contains? grouped-or-port-types (:type entity)))
                                    (not (contains? generated-by-global global-id)))
                           (:id entity)))
                       raw-by-global)
         deleted-ids (set deleted)
         new-products (keep (fn [[global-id entity]]
-                             (when (and (contains? product-types (:type entity))
+                             (when (and (or (contains? product-types (:type entity))
+                                            (contains? grouped-or-port-types (:type entity)))
                                         (not (contains? raw-by-global global-id)))
                                (:id entity)))
                            generated-by-global)
@@ -687,7 +745,8 @@
                 matched)
         reconciled-relation-types
         #{:ifcreldefinesbyproperties :ifcreldefinesbytype
-          :ifcrelassociatesmaterial :ifcrelassociatesclassification}
+          :ifcrelassociatesmaterial :ifcrelassociatesclassification
+          :ifcrelassignstogroup :ifcrelnests :ifcrelconnectsports}
         relation-roots
         (keep (fn [entity]
                 (when (and (contains? reconciled-relation-types (:type entity))
@@ -713,12 +772,19 @@
         (into {}
               (map (fn [[original replacement]]
                      (let [project? (= :ifcproject (:type original))
-                           replacements (cond-> {2 (get-in replacement [:args 2])}
-                                          (not project?)
-                                          (assoc 5 (remap-refs (get-in replacement [:args 5]) id-map)
-                                                 6 (remap-refs (get-in replacement [:args 6]) id-map)))]
-                       [(:id original) (assoc (replace-args original replacements)
-                                              :type (:type replacement))])))
+                           full-replacement?
+                           (contains? grouped-or-port-types (:type original))]
+                       [(:id original)
+                        (if full-replacement?
+                          (assoc replacement :id (:id original)
+                                 :args (remap-refs (:args replacement) reference-map))
+                          (let [replacements
+                                (cond-> {2 (get-in replacement [:args 2])}
+                                  (not project?)
+                                  (assoc 5 (remap-refs (get-in replacement [:args 5]) id-map)
+                                         6 (remap-refs (get-in replacement [:args 6]) id-map)))]
+                            (assoc (replace-args original replacements)
+                                   :type (:type replacement))))])))
               matched)
         removed-relationship? (fn [entity]
                                 (and (relationship? entity)
@@ -1492,6 +1558,66 @@
                             (list-values (get-in entity [:args 4])))))
                    (filter #(= :ifcrelcontainedinspatialstructure (:type %)) entities))))
 
+(defn- groups [table entities]
+  (let [members
+        (reduce (fn [result relation]
+                  (let [group-id (ref-id (get-in relation [:args 6]))]
+                    (assoc result group-id
+                           (mapv ref-id (list-values (get-in relation [:args 4]))))))
+                {} (filter #(= :ifcrelassignstogroup (:type %)) entities))]
+    (mapv (fn [entity]
+            (let [member-entities (keep table (get members (:id entity)))]
+              (cond->
+               {:id (:id entity) :global-id (get-in entity [:args 0])
+                :kind (case (:type entity)
+                        :ifczone :zone :ifcdistributionsystem :distribution-system :system)
+                :ifc/type (:type entity) :name (get-in entity [:args 2])
+                :description (get-in entity [:args 3])
+                :object-type (get-in entity [:args 4])
+                :member-global-ids (mapv #(get-in % [:args 0]) member-entities)}
+                (#{:ifczone :ifcdistributionsystem} (:type entity))
+                (assoc :long-name (get-in entity [:args 5]))
+                (= :ifcdistributionsystem (:type entity))
+                (assoc :predefined-type (get-in entity [:args 6])))))
+          (filter #(contains? group-types (:type %)) entities))))
+
+(defn- ports [table entities]
+  (let [owner-by-port
+        (into {} (mapcat (fn [relation]
+                           (let [owner (ref-id (get-in relation [:args 4]))]
+                             (map (fn [port] [(ref-id port) owner])
+                                  (list-values (get-in relation [:args 5])))))
+                         (filter #(= :ifcrelnests (:type %)) entities)))]
+    {:by-owner
+     (group-by #(get owner-by-port (:id %))
+               (mapv (fn [entity]
+                       {:id (:id entity) :global-id (get-in entity [:args 0])
+                        :name (get-in entity [:args 2])
+                        :description (get-in entity [:args 3])
+                        :object-type (get-in entity [:args 4])
+                        :placement (local-placement table (get-in entity [:args 5]))
+                        :tag (get-in entity [:args 7])
+                        :flow-direction (get-in entity [:args 8])
+                        :predefined-type (get-in entity [:args 9])
+                        :system-type (get-in entity [:args 10])})
+                     (filter #(= :ifcdistributionport (:type %)) entities)))
+     :by-id (into {} (map (juxt :id identity))
+                  (map (fn [entity]
+                         {:id (:id entity) :global-id (get-in entity [:args 0])})
+                       (filter #(= :ifcdistributionport (:type %)) entities)))}))
+
+(defn- port-connections [table entities port-by-id]
+  (mapv (fn [relation]
+          (let [relating (get port-by-id (ref-id (get-in relation [:args 4])))
+                related (get port-by-id (ref-id (get-in relation [:args 5])))
+                realizing (referenced table (get-in relation [:args 6]))]
+            {:id (:id relation) :global-id (get-in relation [:args 0])
+             :name (get-in relation [:args 2]) :description (get-in relation [:args 3])
+             :relating-port-global-id (:global-id relating)
+             :related-port-global-id (:global-id related)
+             :realizing-element-global-id (get-in realizing [:args 0])}))
+        (filter #(= :ifcrelconnectsports (:type %)) entities)))
+
 (defn- georeference [table entities]
   (when-let [conversion (first (filter #(#{:ifcmapconversion :ifcmapconversionscaled}
                                            (:type %)) entities))]
@@ -1543,6 +1669,7 @@
         materials (materials-by-object table entities)
         classifications (classifications-by-object table entities)
         types-by-object (type-relations table entities)
+        port-data (ports table entities)
         {:keys [voids fills]} (opening-relations entities)
         raw-products (into {} (map (fn [entity] [(:id entity) (product table entity)]))
                            (filter #(contains? product-types (:type %)) entities))
@@ -1556,6 +1683,7 @@
                                      :quantity-sets (get qsets-by-object id {})
                                      :material (get materials id)
                                      :classifications (get classifications id [])
+                                     :ports (vec (get-in port-data [:by-owner id] []))
                                      :openings
                                      (mapv (fn [opening-id]
                                              (assoc (get raw-products opening-id)
@@ -1573,7 +1701,10 @@
          :ifc/project (when project-entity (spatial-node table children (:id project-entity)))
          :ifc/units (project-units table project-entity)
          :ifc/georeference (georeference table entities)
-         :ifc/elements products :ifc/source :external-spf
+         :ifc/elements products
+         :ifc/groups (groups table entities)
+         :ifc/connections (port-connections table entities (:by-id port-data))
+         :ifc/source :external-spf
          :ifc/raw-spf text
          :ifc/raw-entities entities
          :ifc/raw-entity-count (count entities)
@@ -1622,6 +1753,11 @@
      :ifc/project (portable-semantic-value (:ifc/project document))
      :ifc/units (portable-semantic-value (:ifc/units document))
      :ifc/georeference (portable-semantic-value (:ifc/georeference document))
+     :ifc/groups (vec (sort-by :global-id
+                               (map portable-semantic-value (:ifc/groups document))))
+     :ifc/connections (vec (sort-by :global-id
+                                    (map portable-semantic-value
+                                         (:ifc/connections document))))
      :ifc/elements (vec (sort-by (juxt :global-id :name) elements))}))
 
 (defn roundtrip-report

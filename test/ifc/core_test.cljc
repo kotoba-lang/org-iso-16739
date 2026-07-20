@@ -344,6 +344,60 @@
                     :actual (:roundtrip/actual report)})))
      :cljs (is true)))
 
+(deftest systems-zones-and-port-connectivity-round-trip
+  (let [document
+        (assoc
+         (ifc/exchange-document
+          {:project {:global-id "systems-project" :name "Systems Project"}
+           :elements
+           [{:id "ahu" :global-id "ahu-global" :kind :proxy :name "AHU"
+             :ports [{:id "ahu-supply" :global-id "ahu-supply-global"
+                      :name "Supply" :flow-direction :source
+                      :predefined-type :duct :system-type :airconditioning}]}
+            {:id "duct" :global-id "duct-global" :kind :duct-segment :name "Duct"
+             :ports [{:id "duct-in" :global-id "duct-in-global"
+                      :name "Inlet" :flow-direction :sink
+                      :predefined-type :duct :system-type :airconditioning}]}]})
+         :ifc/groups
+         [{:id "supply-system" :global-id "supply-system-global"
+           :kind :distribution-system :name "Supply Air"
+           :long-name "Level 01 Supply Air" :predefined-type :airconditioning
+           :member-global-ids ["ahu-global" "duct-global"]}
+          {:id "east-zone" :global-id "east-zone-global" :kind :zone
+           :name "East Zone" :long-name "East Thermal Zone"
+           :member-global-ids ["ahu-global"]}]
+         :ifc/connections
+         [{:id "ahu-to-duct" :global-id "ahu-to-duct-global"
+           :name "AHU to duct"
+           :relating-port-global-id "ahu-supply-global"
+           :related-port-global-id "duct-in-global"}])
+        text (ifc/write-spf document)
+        imported (ifc/read-document text)
+        report (ifc/roundtrip-report text)
+        by-name (into {} (map (juxt :name identity) (:ifc/elements imported)))
+        groups (into {} (map (juxt :name identity) (:ifc/groups imported)))
+        edited (-> imported
+                   (assoc-in [:ifc/groups 0 :name] "Supply Air Revised")
+                   (assoc-in [:ifc/elements 0 :ports 0 :flow-direction] :sourceandsink))
+        hybrid (ifc/read-document (ifc/write-spf edited))]
+    (is (string/includes? text "IFCDISTRIBUTIONSYSTEM"))
+    (is (string/includes? text "IFCZONE"))
+    (is (string/includes? text "IFCDISTRIBUTIONPORT"))
+    (is (string/includes? text "IFCRELCONNECTSPORTS"))
+    (is (= :source (get-in by-name ["AHU" :ports 0 :flow-direction])))
+    (is (= #{"ahu-global" "duct-global"}
+           (set (get-in groups ["Supply Air" :member-global-ids]))))
+    (is (= "duct-in-global"
+           (get-in imported [:ifc/connections 0 :related-port-global-id])))
+    (is (= 2 (count (:ifc/groups hybrid))))
+    (is (= 2 (reduce + (map #(count (:ports %)) (:ifc/elements hybrid)))))
+    (is (= "Supply Air Revised" (get-in hybrid [:ifc/groups 0 :name])))
+    (is (= :sourceandsink
+           (get-in hybrid [:ifc/elements 0 :ports 0 :flow-direction])))
+    (is (:roundtrip/lossless? report)
+        (pr-str {:expected (:roundtrip/expected report)
+                 :actual (:roundtrip/actual report)}))))
+
 (deftest nested-local-placement-composes-parent-orientation
   (let [text (str "ISO-10303-21;\nHEADER;\n"
                   "FILE_DESCRIPTION(('ViewDefinition [DesignTransferView]'),'2;1');\n"
