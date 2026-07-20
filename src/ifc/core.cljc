@@ -8,6 +8,9 @@
 
 (def schema "IFC4X3_ADD2")
 (def contract-version 1)
+(def supported-schemas #{"IFC2X3" "IFC4" "IFC4X3" "IFC4X3_ADD2"})
+
+(declare semantic-fingerprint product-types ref-id)
 
 (def entity-types
   {:wall :ifcwall :slab :ifcslab :column :ifccolumn :beam :ifcbeam
@@ -403,11 +406,113 @@
                    [:typed :ifctext (pr-str (:model project))] :$))]
     @entities))
 
+(defn- entity-refs [entity]
+  (let [refs (atom #{})]
+    (walk/postwalk (fn [value]
+                     (when (and (vector? value) (= :ref (first value)))
+                       (swap! refs conj (second value)))
+                     value)
+                   (:args entity))
+    @refs))
+
+(defn- dependency-ids [table roots]
+  (loop [pending (vec roots) seen #{}]
+    (if-let [id (peek pending)]
+      (if (contains? seen id)
+        (recur (pop pending) seen)
+        (recur (into (pop pending) (entity-refs (get table id))) (conj seen id)))
+      seen)))
+
+(defn- remap-refs [value id-map]
+  (walk/postwalk (fn [node]
+                   (if (and (vector? node) (= :ref (first node)))
+                     [:ref (get id-map (second node) (second node))]
+                     node))
+                 value))
+
+(defn- replace-args [entity replacements]
+  (update entity :args
+          (fn [args]
+            (reduce-kv (fn [result index value] (assoc result index value))
+                       (vec args) replacements))))
+
+(defn- hybrid-entities
+  "Retain the imported entity graph and splice regenerated product geometry into it."
+  [document]
+  (let [raw (:ifc/raw-entities document)
+        generated-vectors (standard-entities (dissoc document :ifc/raw-spf
+                                                      :ifc/import-fingerprint))
+        generated (mapv (fn [[id type & args]] {:id id :type type :args (vec args)})
+                        generated-vectors)
+        generated-table (into {} (map (juxt :id identity)) generated)
+        product-or-spatial? #(or (contains? product-types (:type %))
+                                 (contains? #{:ifcproject :ifcsite :ifcbuilding
+                                              :ifcbuildingstorey :ifcspace} (:type %)))
+        by-global (fn [entities]
+                    (into {} (keep (fn [entity]
+                                     (when (and (product-or-spatial? entity)
+                                                (string? (get-in entity [:args 0])))
+                                       [(get-in entity [:args 0]) entity])))
+                          entities))
+        generated-by-global (by-global generated)
+        raw-by-global (by-global raw)
+        matched (keep (fn [[global-id original]]
+                        (when-let [replacement (get generated-by-global global-id)]
+                          [original replacement]))
+                      raw-by-global)
+        geometry-roots
+        (mapcat (fn [[original replacement]]
+                  (if (= :ifcproject (:type original))
+                    []
+                    (keep ref-id [(get-in replacement [:args 5])
+                                  (get-in replacement [:args 6])])))
+                matched)
+        dependencies (dependency-ids generated-table geometry-roots)
+        max-raw-id (reduce max 0 (map :id raw))
+        id-map (into {} (map-indexed (fn [index id] [id (+ max-raw-id index 1)])
+                                     (sort dependencies)))
+        appended
+        (mapv (fn [id]
+                (let [entity (get generated-table id)]
+                  (assoc entity :id (get id-map id)
+                         :args (remap-refs (:args entity) id-map))))
+              (sort dependencies))
+        replacement-by-raw-id
+        (into {}
+              (map (fn [[original replacement]]
+                     (let [project? (= :ifcproject (:type original))
+                           replacements (cond-> {2 (get-in replacement [:args 2])}
+                                          (not project?)
+                                          (assoc 5 (remap-refs (get-in replacement [:args 5]) id-map)
+                                                 6 (remap-refs (get-in replacement [:args 6]) id-map)))]
+                       [(:id original) (replace-args original replacements)])))
+              matched)
+        patched (mapv #(get replacement-by-raw-id (:id %) %) raw)]
+    (mapv (fn [{:keys [id type args]}] (into [id type] args))
+          (concat patched appended))))
+
 (defn write-spf [document]
-  (apply part21/file {:description "ViewDefinition [DesignTransferView]"
-                      :name "building.ifc" :schema schema
-                      :author "KAMI" :org "kotoba-lang"}
-         (standard-entities document)))
+  (let [target-schema (or (:ifc/schema document) schema)
+        unchanged-external? (and (:ifc/raw-spf document)
+                                 (= (:ifc/import-fingerprint document)
+                                    (semantic-fingerprint document)))]
+    (when-not (contains? supported-schemas target-schema)
+      (throw (ex-info "unsupported IFC export schema"
+                      {:schema target-schema :supported supported-schemas})))
+    (if unchanged-external?
+      (:ifc/raw-spf document)
+      (apply part21/file {:description "ViewDefinition [DesignTransferView]"
+                          :name "building.ifc" :schema target-schema
+                          :author "KAMI" :org "kotoba-lang"}
+             (if (seq (:ifc/raw-entities document))
+               (hybrid-entities document)
+               (standard-entities document))))))
+
+(defn rewrite-spf
+  "Force standard-entity regeneration while retaining the imported schema."
+  [document]
+  (write-spf (dissoc document :ifc/raw-spf :ifc/import-fingerprint
+                     :ifc/raw-entities)))
 
 (defn read-spf [text]
   (when-not (string/includes? text (str "FILE_SCHEMA(('" schema "'))"))
@@ -967,12 +1072,18 @@
                                                     :filled-by-global-id
                                                     (:global-id (get raw-products (get fills opening-id)))
                                                     :property-sets (get psets-by-object opening-id {})))
-                                           (get openings-by-host id))))))]
-    {:ifc/schema (:part21/schema parsed) :ifc/contract-version contract-version
-     :ifc/project (when project-entity (spatial-node table children (:id project-entity)))
-     :ifc/units (project-units table project-entity)
-     :ifc/georeference (georeference table entities)
-     :ifc/elements products :ifc/source :external-spf}))
+                                           (get openings-by-host id))))))
+        document
+        {:ifc/schema (:part21/schema parsed) :ifc/contract-version contract-version
+         :ifc/project (when project-entity (spatial-node table children (:id project-entity)))
+         :ifc/units (project-units table project-entity)
+         :ifc/georeference (georeference table entities)
+         :ifc/elements products :ifc/source :external-spf
+         :ifc/raw-spf text
+         :ifc/raw-entities entities
+         :ifc/raw-entity-count (count entities)
+         :ifc/raw-type-frequencies (frequencies (map :type entities))}]
+    (assoc document :ifc/import-fingerprint (semantic-fingerprint document))))
 
 (defn read-document [text]
   (try
@@ -984,9 +1095,10 @@
 
 (defn- spatial-container-index [project]
   (letfn [(visit [node]
-            (into {(:id node) (:global-id node)}
-                  (mapcat visit (:children node))))]
-    (visit project)))
+            (when node
+              (into {(:id node) (:global-id node)}
+                    (mapcat visit (:children node)))))]
+    (or (visit project) {})))
 
 (defn- portable-semantic-value [value]
   (walk/postwalk
@@ -1021,11 +1133,14 @@
   "Parse an external SPF, rewrite standard IFC, and compare exchange meaning."
   [text]
   (let [before (read-document text)
-        output (write-spf before)
+        passthrough (write-spf before)
+        output (rewrite-spf before)
         after (read-document output)
         expected (semantic-fingerprint before)
         actual (semantic-fingerprint after)]
     {:roundtrip/lossless? (= expected actual)
+     :roundtrip/passthrough-byte-identical? (= text passthrough)
+     :roundtrip/export-mode :standard-rewrite
      :roundtrip/input-schema (:ifc/schema before)
      :roundtrip/output-schema (:ifc/schema after)
      :roundtrip/input-elements (count (:ifc/elements before))
