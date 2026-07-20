@@ -45,6 +45,14 @@
                             (case (:kind profile)
                               :rectangle (emit! :ifcrectangleprofiledef :area (or (:name profile) "Profile")
                                                 :$ (:x-dim profile) (:y-dim profile))
+                              :circle (emit! :ifccircleprofiledef :area (or (:name profile) "Profile")
+                                             :$ (:radius profile))
+                              :i-shape (emit! :ifcishapeprofiledef :area (or (:name profile) "Profile") :$
+                                              (:overall-width profile) (:overall-depth profile)
+                                              (:web-thickness profile) (:flange-thickness profile)
+                                              (or (:fillet-radius profile) :$)
+                                              (or (:flange-edge-radius profile) :$)
+                                              (or (:flange-slope profile) :$))
                               :arbitrary-closed
                               (let [points (mapv point! (:points profile))
                                     curve (emit! :ifcpolyline (list* points))]
@@ -55,6 +63,13 @@
                           (emit! :ifcextrudedareasolid profile-ref (axis! (:position geometry))
                                  (direction! (or (:direction geometry) [0.0 0.0 1.0]))
                                  (:depth geometry))))
+                      :swept-disk-solid
+                      (let [directrix (emit! :ifcpolyline
+                                             (list* (mapv point! (:directrix geometry))))]
+                        (emit! :ifcsweptdisksolid directrix (:radius geometry)
+                               (or (:inner-radius geometry) :$)
+                               (or (:start-param geometry) :$)
+                               (or (:end-param geometry) :$)))
                       :faceted-brep
                       (let [faces
                             (mapv (fn [face]
@@ -269,6 +284,19 @@
        :name (get-in entity [:args 1])
        :position (axis-placement table (get-in entity [:args 2]))
        :x-dim (get-in entity [:args 3]) :y-dim (get-in entity [:args 4])}
+      :ifccircleprofiledef
+      {:kind :circle :profile-type (get-in entity [:args 0])
+       :name (get-in entity [:args 1])
+       :position (axis-placement table (get-in entity [:args 2]))
+       :radius (get-in entity [:args 3])}
+      :ifcishapeprofiledef
+      {:kind :i-shape :profile-type (get-in entity [:args 0])
+       :name (get-in entity [:args 1])
+       :position (axis-placement table (get-in entity [:args 2]))
+       :overall-width (get-in entity [:args 3]) :overall-depth (get-in entity [:args 4])
+       :web-thickness (get-in entity [:args 5]) :flange-thickness (get-in entity [:args 6])
+       :fillet-radius (get-in entity [:args 7])
+       :flange-edge-radius (get-in entity [:args 8]) :flange-slope (get-in entity [:args 9])}
       :ifcarbitraryclosedprofiledef
       {:kind :arbitrary-closed :profile-type (get-in entity [:args 0])
        :name (get-in entity [:args 1])
@@ -386,6 +414,12 @@
        :position (axis-placement table (get-in item [:args 1]))
        :direction (direction table (get-in item [:args 2]))
        :depth (get-in item [:args 3])}
+      :ifcsweptdisksolid
+      {:kind :swept-disk-solid
+       :directrix (polyline table (get-in item [:args 0]))
+       :radius (get-in item [:args 1])
+       :inner-radius (get-in item [:args 2])
+       :start-param (get-in item [:args 3]) :end-param (get-in item [:args 4])}
       :ifcmappeditem (mapped-geometry table item)
       (:ifcbooleanclippingresult :ifcbooleanresult)
       {:kind :boolean-result :operator (get-in item [:args 0])

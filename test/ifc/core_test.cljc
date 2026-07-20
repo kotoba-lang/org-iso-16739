@@ -55,13 +55,22 @@
                      :geometry {:kind :triangulated-face-set :closed true
                                 :coordinates [[0 0 0] [1 0 0] [0 1 0]]
                                 :coord-indices [[1 2 3]]}}
-                    {:id 13 :global-id "door-standard" :kind :door :name "Door"}]})
+                    {:id 13 :global-id "door-standard" :kind :door :name "Door"}
+                    {:id 14 :global-id "pipe-standard" :kind :proxy :name "Pipe"
+                     :geometry {:kind :swept-disk-solid
+                                :directrix [[0 0 0] [3 0 0] [3 2 0]] :radius 0.08}}
+                    {:id 15 :global-id "round-standard" :kind :column :name "Round Column"
+                     :geometry {:kind :extruded-area-solid
+                                :profile {:kind :circle :radius 0.3}
+                                :direction [0 0 1] :depth 3.5}}]})
         text (ifc/write-spf document)
         imported (ifc/read-document text)
         by-name (into {} (map (juxt :name identity) (:ifc/elements imported)))]
     (is (string/includes? text "IFCEXTRUDEDAREASOLID"))
     (is (string/includes? text "IFCFACETEDBREP"))
     (is (string/includes? text "IFCTRIANGULATEDFACESET"))
+    (is (string/includes? text "IFCSWEPTDISKSOLID"))
+    (is (string/includes? text "IFCCIRCLEPROFILEDEF"))
     (is (= :external-spf (:ifc/source imported)))
     (is (= "Standard Tower" (get-in imported [:ifc/project :name])))
     (is (= "Tokyo Site" (get-in imported [:ifc/project :children 0 :name])))
@@ -83,7 +92,9 @@
            (get-in by-name ["Standard Wall" :geometry :profile :kind])))
     (is (= 2.8 (get-in by-name ["Standard Wall" :geometry :depth])))
     (is (= :faceted-brep (get-in by-name ["Tetrahedron" :geometry :kind])))
-    (is (= [[1 2 3]] (get-in by-name ["Tessellated" :geometry :coord-indices])))))
+    (is (= [[1 2 3]] (get-in by-name ["Tessellated" :geometry :coord-indices])))
+    (is (= :swept-disk-solid (get-in by-name ["Pipe" :geometry :kind])))
+    (is (= :circle (get-in by-name ["Round Column" :geometry :profile :kind])))))
 
 (deftest reads-external-spatial-hierarchy-and-extrusion
   (let [text #?(:clj (slurp (io/file "test/fixtures/revit-wall.ifc")) :cljs "")
@@ -94,7 +105,9 @@
         clipped (first (filter #(= 140 (:id %)) (:ifc/elements document)))
         brep (first (filter #(= 150 (:id %)) (:ifc/elements document)))
         tessellated (first (filter #(= 160 (:id %)) (:ifc/elements document)))
-        polygonal (first (filter #(= 170 (:id %)) (:ifc/elements document)))]
+        polygonal (first (filter #(= 170 (:id %)) (:ifc/elements document)))
+        swept (first (filter #(= 180 (:id %)) (:ifc/elements document)))
+        round-column (first (filter #(= 190 (:id %)) (:ifc/elements document)))]
     (is (= :external-spf (:ifc/source document)))
     (is (= [:ifcsite :ifcbuilding :ifcbuildingstorey]
            [(get-in project [:children 0 :type])
@@ -138,4 +151,10 @@
     (is (= [[1 2 3] [1 4 2] [2 4 3] [3 4 1]]
            (get-in tessellated [:geometry :coord-indices])))
     (is (= :polygonal-face-set (get-in polygonal [:geometry :kind])))
-    (is (= [1 2 3] (get-in polygonal [:geometry :faces 0 :outer])))))
+    (is (= [1 2 3] (get-in polygonal [:geometry :faces 0 :outer])))
+    (is (= :swept-disk-solid (get-in swept [:geometry :kind])))
+    (is (= [[0.0 0.0 0.0] [4.0 0.0 0.0] [4.0 3.0 0.0]]
+           (get-in swept [:geometry :directrix])))
+    (is (= 0.1 (get-in swept [:geometry :radius])))
+    (is (= :circle (get-in round-column [:geometry :profile :kind])))
+    (is (= 0.25 (get-in round-column [:geometry :profile :radius])))))
