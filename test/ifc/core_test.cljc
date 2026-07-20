@@ -730,6 +730,36 @@
                                        :conversion-offset])))
     (is (:roundtrip/lossless? (ifc/roundtrip-report output)))))
 
+(deftest derived-monetary-and-context-dependent-project-units-roundtrip
+  (let [metre {:kind :si :type :lengthunit :name :metre}
+        second-unit {:kind :si :type :timeunit :name :second}
+        velocity {:kind :derived :type :linearvelocityunit
+                  :elements [{:unit metre :exponent 1}
+                             {:unit second-unit :exponent -1}]}
+        rpm {:kind :context-dependent :type :frequencyunit :name "RPM"
+             :dimensions [0 0 -1 0 0 0 0]}
+        document (assoc (ifc/exchange-document
+                         {:project {:global-id "all-units" :name "All units"}
+                          :elements []})
+                        :ifc/units {:lengthunit metre
+                                    :linearvelocityunit velocity
+                                    :frequencyunit rpm
+                                    :monetaryunit {:kind :monetary
+                                                   :type :monetaryunit
+                                                   :currency :jpy}})
+        output (ifc/rewrite-spf document)
+        imported (ifc/read-document output)]
+    (is (string/includes? output "IFCDERIVEDUNIT"))
+    (is (string/includes? output "IFCMONETARYUNIT"))
+    (is (string/includes? output "IFCCONTEXTDEPENDENTUNIT"))
+    (is (= [1.0 -1.0] (mapv :exponent
+                             (get-in imported [:ifc/units :linearvelocityunit :elements]))))
+    (is (= :second (get-in imported [:ifc/units :linearvelocityunit
+                                     :elements 1 :unit :name])))
+    (is (= :jpy (get-in imported [:ifc/units :monetaryunit :currency])))
+    (is (= "RPM" (get-in imported [:ifc/units :frequencyunit :name])))
+    (is (:roundtrip/lossless? (ifc/roundtrip-report output)))))
+
 (deftest hybrid-export-splices-edited-geometry-without-dropping-unknown-entities
   #?(:clj
      (let [fixture (slurp (io/file "test/fixtures/revit-wall.ifc"))
