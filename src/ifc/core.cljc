@@ -585,13 +585,29 @@
                   (let [type-psets (mapv (fn [[name pset]]
                                            (property-set! (:id type-object) name pset))
                                          (:property-sets type-object))
+                        representation-maps
+                        (mapv (fn [representation-map]
+                                (let [geometry (:geometry representation-map)
+                                      items (if (= :collection (:kind geometry))
+                                              (vec (keep geometry! (:items geometry)))
+                                              (some-> (geometry! geometry) vector))
+                                      shape (emit! :ifcshaperepresentation :$
+                                                   (or (:identifier representation-map) "Body")
+                                                   (or (:representation-type representation-map)
+                                                       "Body")
+                                                   (list* items))]
+                                  (emit! :ifcrepresentationmap
+                                         (axis! (:mapping-origin representation-map)) shape)))
+                              (:representation-maps type-object))
                         type-ref (emit! (or (:ifc/type type-object)
                                             (get type-entity-types (:kind element)
                                                  :ifcbuildingelementproxytype))
                                         (or (:global-id type-object)
                                             (str "TYPE_" (:id type-object)))
                                         :$ (:name type-object) :$ :$
-                                        (if (seq type-psets) (list* type-psets) :$) :$ :$
+                                        (if (seq type-psets) (list* type-psets) :$)
+                                        (if (seq representation-maps)
+                                          (list* representation-maps) :$) :$
                                         (or (:element-type type-object) :$)
                                         (or (:predefined-type type-object) :notdefined))]
                     (material-association! type-ref type-object)
@@ -1738,6 +1754,19 @@
                                      (list-values (get-in type-entity [:args 5])))
                                :material (get materials (:id type-entity))
                                :classifications (get classifications (:id type-entity) [])
+                               :representation-maps
+                               (mapv (fn [map-ref]
+                                       (let [representation-map (referenced table map-ref)
+                                             shape-ref (get-in representation-map [:args 1])
+                                             shape (referenced table shape-ref)]
+                                         {:mapping-origin
+                                          (axis-placement table
+                                                          (get-in representation-map [:args 0]))
+                                          :identifier (get-in shape [:args 1])
+                                          :representation-type (get-in shape [:args 2])
+                                          :geometry
+                                          (geometry-items table (shape-items table shape-ref))}))
+                                     (list-values (get-in type-entity [:args 6])))
                                :element-type (get-in type-entity [:args 8])
                                :predefined-type (get-in type-entity [:args 9])}]
               (reduce #(assoc %1 (ref-id %2) type-object) by-object
