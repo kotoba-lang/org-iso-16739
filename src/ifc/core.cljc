@@ -1,6 +1,7 @@
 (ns ifc.core
   "IFC 4.3 exchange over the shared kotoba-lang/step serializer."
-  (:require [clojure.string :as string]
+  (:require [clojure.set :as set]
+            [clojure.string :as string]
             [clojure.walk :as walk]
             [brep.spline :as spline]
             [iso-10303.part21 :as part21]
@@ -369,9 +370,14 @@
         product-by-source (atom {})
         _product-refs
         (mapv (fn [element]
-                (let [ref (product! element (or (:ifc/entity-type element)
-                                                (get entity-types (:kind element)
-                                                     :ifcbuildingelementproxy)))]
+                (let [kind-type (get entity-types (:kind element))
+                      imported-type (:ifc/entity-type element)
+                      entity-type (if (and imported-type
+                                           (or (= :other (:kind element))
+                                               (= imported-type kind-type)))
+                                    imported-type
+                                    (or kind-type :ifcbuildingelementproxy))
+                      ref (product! element entity-type)]
                   (swap! product-by-source assoc (:id element) ref)
                   (psets! ref element)
                   (type! ref element)
@@ -437,7 +443,8 @@
                        (vec args) replacements))))
 
 (defn- hybrid-entities
-  "Retain the imported entity graph and splice regenerated product geometry into it."
+  "Retain vendor entities while reconciling edited, added, removed, and retyped
+  products against a regenerated semantic graph."
   [document]
   (let [raw (:ifc/raw-entities document)
         generated-vectors (standard-entities (dissoc document :ifc/raw-spf
@@ -445,9 +452,10 @@
         generated (mapv (fn [[id type & args]] {:id id :type type :args (vec args)})
                         generated-vectors)
         generated-table (into {} (map (juxt :id identity)) generated)
+        spatial-types #{:ifcproject :ifcsite :ifcbuilding :ifcbuildingstorey :ifcspace}
         product-or-spatial? #(or (contains? product-types (:type %))
-                                 (contains? #{:ifcproject :ifcsite :ifcbuilding
-                                              :ifcbuildingstorey :ifcspace} (:type %)))
+                                 (contains? spatial-types (:type %)))
+        relationship? #(string/starts-with? (name (:type %)) "ifcrel")
         by-global (fn [entities]
                     (into {} (keep (fn [entity]
                                      (when (and (product-or-spatial? entity)
@@ -460,6 +468,23 @@
                         (when-let [replacement (get generated-by-global global-id)]
                           [original replacement]))
                       raw-by-global)
+        deleted (keep (fn [[global-id entity]]
+                        (when (and (contains? product-types (:type entity))
+                                   (not (contains? generated-by-global global-id)))
+                          (:id entity)))
+                      raw-by-global)
+        deleted-ids (set deleted)
+        new-products (keep (fn [[global-id entity]]
+                             (when (and (contains? product-types (:type entity))
+                                        (not (contains? raw-by-global global-id)))
+                               (:id entity)))
+                           generated-by-global)
+        new-product-ids (set new-products)
+        generated-to-raw
+        (into {} (keep (fn [[global-id generated-entity]]
+                         (when-let [raw-entity (get raw-by-global global-id)]
+                           [(:id generated-entity) (:id raw-entity)]))
+                       generated-by-global))
         geometry-roots
         (mapcat (fn [[original replacement]]
                   (if (= :ifcproject (:type original))
@@ -467,16 +492,25 @@
                     (keep ref-id [(get-in replacement [:args 5])
                                   (get-in replacement [:args 6])])))
                 matched)
-        dependencies (dependency-ids generated-table geometry-roots)
+        relation-roots (keep (fn [entity]
+                               (when (and (relationship? entity)
+                                          (seq (set/intersection new-product-ids
+                                                                 (entity-refs entity))))
+                                 (:id entity)))
+                             generated)
+        dependencies (dependency-ids generated-table
+                                     (concat geometry-roots new-products relation-roots))
+        append-ids (remove #(contains? generated-to-raw %) dependencies)
         max-raw-id (reduce max 0 (map :id raw))
         id-map (into {} (map-indexed (fn [index id] [id (+ max-raw-id index 1)])
-                                     (sort dependencies)))
+                                     (sort append-ids)))
+        reference-map (merge id-map generated-to-raw)
         appended
         (mapv (fn [id]
                 (let [entity (get generated-table id)]
                   (assoc entity :id (get id-map id)
-                         :args (remap-refs (:args entity) id-map))))
-              (sort dependencies))
+                         :args (remap-refs (:args entity) reference-map))))
+              (sort append-ids))
         replacement-by-raw-id
         (into {}
               (map (fn [[original replacement]]
@@ -485,9 +519,17 @@
                                           (not project?)
                                           (assoc 5 (remap-refs (get-in replacement [:args 5]) id-map)
                                                  6 (remap-refs (get-in replacement [:args 6]) id-map)))]
-                       [(:id original) (replace-args original replacements)])))
+                       [(:id original) (assoc (replace-args original replacements)
+                                              :type (:type replacement))])))
               matched)
-        patched (mapv #(get replacement-by-raw-id (:id %) %) raw)]
+        removed-relationship? (fn [entity]
+                                (and (relationship? entity)
+                                     (seq (set/intersection deleted-ids
+                                                            (entity-refs entity)))))
+        patched (->> raw
+                     (remove #(or (contains? deleted-ids (:id %))
+                                  (removed-relationship? %)))
+                     (mapv #(get replacement-by-raw-id (:id %) %)))]
     (mapv (fn [{:keys [id type args]}] (into [id type] args))
           (concat patched appended))))
 
