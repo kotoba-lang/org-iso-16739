@@ -1,6 +1,7 @@
 (ns ifc.core
   "IFC 4.3 exchange over the shared kotoba-lang/step serializer."
   (:require [clojure.string :as string]
+            [brep.spline :as spline]
             [iso-10303.part21 :as part21]
             #?(:clj [clojure.edn :as edn] :cljs [cljs.reader :as edn])))
 
@@ -475,7 +476,8 @@
 
 (defn- sampled-edge-points [edge]
   (let [curve (:curve edge)]
-    (if (#{:circle :ellipse} (:kind curve))
+    (cond
+      (#{:circle :ellipse} (:kind curve))
       (let [position (:position curve) origin (or (:location position) [0.0 0.0 0.0])
             z-axis (normalize3 (or (:axis position) [0.0 0.0 1.0]))
             x-axis (normalize3 (or (:ref-direction position) [1.0 0.0 0.0]))
@@ -505,7 +507,35 @@
                         (mapv #(* rx (#?(:clj Math/cos :cljs js/Math.cos) theta) %) x-axis)
                         (mapv #(* ry (#?(:clj Math/sin :cljs js/Math.sin) theta) %) y-axis))))
               (range segments)))
-      [(:start edge)])))
+
+      (= :b-spline-curve (:kind curve))
+      (let [control-count (count (:control-points curve))
+            knots (spline/expand-knots (:knots curve) (:multiplicities curve)
+                                       (:degree curve) control-count)
+            curve (assoc curve :knots knots)
+            [domain-start domain-end] (spline/parameter-range (:degree curve) knots control-count)
+            distance-squared (fn [a b] (reduce + (map (fn [x y] (let [d (- x y)] (* d d))) a b)))
+            nearest-parameter
+            (fn [point]
+              (apply min-key
+                     (fn [parameter]
+                       (distance-squared point (spline/curve-point curve parameter)))
+                     (map #(+ domain-start (* (- domain-end domain-start) (/ % 128.0)))
+                          (range 129))))
+            start (nearest-parameter (:start edge)) end (nearest-parameter (:end edge))
+            increasing? (= (false? (:orientation edge)) (false? (:same-sense edge)))
+            [start end] (if increasing? [start end] [end start])
+            domain-size (- domain-end domain-start)
+            end (if (and (:closed curve) (<= end start)) (+ end domain-size) end)
+            segments (max 8 (* 4 (dec control-count)))
+            wrap (fn [parameter]
+                   (if (> parameter domain-end) (- parameter domain-size) parameter))]
+        (mapv (fn [i]
+                (spline/curve-point curve
+                                    (wrap (+ start (* (- end start) (/ i segments))))))
+              (range segments)))
+
+      :else [(:start edge)])))
 
 (defn- loop-data [table loop-entity]
   (case (:type loop-entity)
