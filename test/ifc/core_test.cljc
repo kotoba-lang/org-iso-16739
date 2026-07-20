@@ -647,6 +647,27 @@
     (is (string/includes? output "FILE_SCHEMA(('IFC4'))"))
     (is (= "IFC4" (:ifc/schema (ifc/read-document output))))))
 
+(deftest ifc43-scaled-map-conversion-roundtrips-axis-factors
+  (let [document (assoc (ifc/exchange-document
+                         {:project {:global-id "scaled-project" :name "Scaled CRS"}
+                          :elements []})
+                        :ifc/georeference
+                        {:projected-crs {:name "EPSG:6677" :geodetic-datum "JGD2011"}
+                         :world-origin [0.0 0.0 0.0] :true-north [0.0 1.0]
+                         :eastings 500000.0 :northings 3950000.0
+                         :orthogonal-height 42.0 :x-axis-abscissa 1.0
+                         :x-axis-ordinate 0.0 :scale 1.0
+                         :map-conversion-kind :scaled
+                         :factor-x 1.0001 :factor-y 0.9999 :factor-z 1.0002})
+        output (ifc/rewrite-spf document)
+        imported (ifc/read-document output)]
+    (is (string/includes? output "IFCMAPCONVERSIONSCALED"))
+    (is (= :scaled (get-in imported [:ifc/georeference :map-conversion-kind])))
+    (is (= 1.0001 (get-in imported [:ifc/georeference :factor-x])))
+    (is (= 0.9999 (get-in imported [:ifc/georeference :factor-y])))
+    (is (= 1.0002 (get-in imported [:ifc/georeference :factor-z])))
+    (is (:roundtrip/lossless? (ifc/roundtrip-report output)))))
+
 (deftest hybrid-export-splices-edited-geometry-without-dropping-unknown-entities
   #?(:clj
      (let [fixture (slurp (io/file "test/fixtures/revit-wall.ifc"))

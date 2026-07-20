@@ -580,13 +580,23 @@
                                  (or (:vertical-datum crs) :$) (or (:map-projection crs) :$)
                                  (or (:map-zone crs) :$) :$)))
         _map-conversion (when projected-crs
-                          (emit! :ifcmapconversion context projected-crs
-                                 (or (:eastings georeference) 0.0)
-                                 (or (:northings georeference) 0.0)
-                                 (or (:orthogonal-height georeference) 0.0)
-                                 (or (:x-axis-abscissa georeference) 1.0)
-                                 (or (:x-axis-ordinate georeference) 0.0)
-                                 (or (:scale georeference) 1.0)))
+                          (let [arguments [context projected-crs
+                                           (or (:eastings georeference) 0.0)
+                                           (or (:northings georeference) 0.0)
+                                           (or (:orthogonal-height georeference) 0.0)
+                                           (or (:x-axis-abscissa georeference) 1.0)
+                                           (or (:x-axis-ordinate georeference) 0.0)
+                                           (or (:scale georeference) 1.0)]
+                                scaled? (or (= :scaled (:map-conversion-kind georeference))
+                                            (some? (:factor-x georeference))
+                                            (some? (:factor-y georeference))
+                                            (some? (:factor-z georeference)))]
+                            (apply emit!
+                                   (if scaled? :ifcmapconversionscaled :ifcmapconversion)
+                                   (cond-> arguments
+                                     scaled? (into [(or (:factor-x georeference) 1.0)
+                                                    (or (:factor-y georeference) 1.0)
+                                                    (or (:factor-z georeference) 1.0)])))))
         project-ref (emit! :ifcproject (or (:global-id project) "KOTOBA_PROJECT") :$
                            (or (:name project) "Project") :$ :$ :$ (list* [context]) :$ units)
         spatial-roots (or (seq (:children project))
@@ -1736,16 +1746,22 @@
                                            (:type %)) entities))]
     (let [context (referenced table (get-in conversion [:args 0]))
           crs (referenced table (get-in conversion [:args 1]))]
-      {:projected-crs {:name (get-in crs [:args 0]) :description (get-in crs [:args 1])
-                       :geodetic-datum (get-in crs [:args 2])
-                       :vertical-datum (get-in crs [:args 3])
-                       :map-projection (get-in crs [:args 4]) :map-zone (get-in crs [:args 5])}
+      (cond->
+       {:projected-crs {:name (get-in crs [:args 0]) :description (get-in crs [:args 1])
+                        :geodetic-datum (get-in crs [:args 2])
+                        :vertical-datum (get-in crs [:args 3])
+                        :map-projection (get-in crs [:args 4]) :map-zone (get-in crs [:args 5])}
        :world-origin (get-in (axis-placement table (get-in context [:args 4])) [:location])
        :true-north (direction table (get-in context [:args 5]))
        :eastings (get-in conversion [:args 2]) :northings (get-in conversion [:args 3])
        :orthogonal-height (get-in conversion [:args 4])
        :x-axis-abscissa (get-in conversion [:args 5])
-       :x-axis-ordinate (get-in conversion [:args 6]) :scale (get-in conversion [:args 7])})))
+        :x-axis-ordinate (get-in conversion [:args 6]) :scale (get-in conversion [:args 7])}
+        (= :ifcmapconversionscaled (:type conversion))
+        (assoc :map-conversion-kind :scaled
+               :factor-x (get-in conversion [:args 8])
+               :factor-y (get-in conversion [:args 9])
+               :factor-z (get-in conversion [:args 10]))))))
 
 (defn- spatial-node [table children id]
   (let [entity (get table id)]
