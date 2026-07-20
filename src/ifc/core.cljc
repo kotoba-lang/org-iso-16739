@@ -37,6 +37,16 @@
                        (direction! (or (:axis placement) [0.0 0.0 1.0]))
                        (direction! (or (:ref-direction placement) [1.0 0.0 0.0]))))
         local! (fn [placement] (emit! :ifclocalplacement :$ (axis! placement)))
+        surface! (fn [surface]
+                   (case (:kind surface)
+                     :plane (emit! :ifcplane (axis! (:position surface)))
+                     :cylinder (emit! :ifccylindricalsurface (axis! (:position surface))
+                                      (:radius surface))
+                     :sphere (emit! :ifcsphericalsurface (axis! (:position surface))
+                                    (:radius surface))
+                     :torus (emit! :ifctoroidalsurface (axis! (:position surface))
+                                   (:major-radius surface) (:minor-radius surface))
+                     nil))
         geometry! (fn geometry! [geometry]
                     (case (:kind geometry)
                       :extruded-area-solid
@@ -85,6 +95,23 @@
                                   (:faces geometry))
                             shell (emit! :ifcclosedshell (list* faces))]
                         (emit! :ifcfacetedbrep shell))
+                      :advanced-brep
+                      (let [faces
+                            (mapv (fn [face]
+                                    (let [bounds
+                                          (mapv (fn [bound]
+                                                  (let [loop-ref (emit! :ifcpolyloop
+                                                                        (list* (mapv point! (:points bound))))]
+                                                    (emit! (if (= :outer (:kind bound))
+                                                             :ifcfaceouterbound :ifcfacebound)
+                                                           loop-ref (not (false? (:orientation bound))))))
+                                                (:bounds face))]
+                                      (emit! :ifcadvancedface (list* bounds)
+                                             (surface! (:surface face))
+                                             (not (false? (:same-sense face))))))
+                                  (:faces geometry))
+                            shell (emit! :ifcclosedshell (list* faces))]
+                        (emit! :ifcadvancedbrep shell))
                       :triangulated-face-set
                       (let [coordinates (emit! :ifccartesianpointlist3d
                                                (list* (mapv list* (:coordinates geometry))))]
@@ -388,6 +415,33 @@
                                             (list-values (get-in face [:args 0]))))}))
                     (list-values (get-in shell [:args 0])))})))
 
+(defn- surface [table ref]
+  (let [entity (referenced table ref)]
+    (case (:type entity)
+      :ifcplane {:kind :plane :position (axis-placement table (get-in entity [:args 0]))}
+      :ifccylindricalsurface
+      {:kind :cylinder :position (axis-placement table (get-in entity [:args 0]))
+       :radius (get-in entity [:args 1])}
+      :ifcsphericalsurface
+      {:kind :sphere :position (axis-placement table (get-in entity [:args 0]))
+       :radius (get-in entity [:args 1])}
+      :ifctoroidalsurface
+      {:kind :torus :position (axis-placement table (get-in entity [:args 0]))
+       :major-radius (get-in entity [:args 1]) :minor-radius (get-in entity [:args 2])}
+      nil)))
+
+(defn- advanced-brep [table item]
+  (let [shell (referenced table (get-in item [:args 0]))]
+    (when (= :ifcclosedshell (:type shell))
+      {:kind :advanced-brep
+       :faces (mapv (fn [face-ref]
+                      (let [face (referenced table face-ref)]
+                        {:bounds (vec (keep #(face-bound table %)
+                                            (list-values (get-in face [:args 0]))))
+                         :surface (surface table (get-in face [:args 1]))
+                         :same-sense (get-in face [:args 2])}))
+                    (list-values (get-in shell [:args 0])))})))
+
 (defn- point-list [table ref]
   (let [entity (referenced table ref)]
     (when (#{:ifccartesianpointlist2d :ifccartesianpointlist3d} (:type entity))
@@ -449,6 +503,7 @@
        :second-operand (geometry-item table (get-in item [:args 2]))}
       (:ifchalfspacesolid :ifcpolygonalboundedhalfspace) (half-space table item)
       :ifcfacetedbrep (faceted-brep table item)
+      :ifcadvancedbrep (advanced-brep table item)
       (:ifctriangulatedfaceset :ifcpolygonalfaceset) (tessellated-face-set table item)
       nil)))
 
