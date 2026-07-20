@@ -693,6 +693,43 @@
                                      :map-unit :name])))
     (is (:roundtrip/lossless? (ifc/roundtrip-report output)))))
 
+(deftest conversion-units-survive-property-values-and-temperature-offsets
+  (let [foot {:kind :conversion-based :type :lengthunit :name "FOOT"
+              :dimensions [1 0 0 0 0 0 0]
+              :conversion-factor
+              {:value 0.3048 :value-type :ifclengthmeasure
+               :unit {:kind :si :type :lengthunit :name :metre}}}
+        fahrenheit {:kind :conversion-based-with-offset
+                    :type :thermodynamictemperatureunit :name "FAHRENHEIT"
+                    :dimensions [0 0 0 0 1 0 0] :conversion-offset -459.67
+                    :conversion-factor
+                    {:value (/ 5.0 9.0) :value-type :ifcreal
+                     :unit {:kind :si :type :thermodynamictemperatureunit
+                            :name :kelvin}}}
+        document (ifc/exchange-document
+                  {:project {:global-id "unit-properties" :name "Units"}
+                   :elements
+                   [{:id 1 :global-id "unit-wall" :kind :wall :name "Wall"
+                     :property-sets
+                     {"Pset_Units"
+                      {:properties
+                       {"Length" {:kind :single :value 12.0
+                                  :value-type :ifclengthmeasure :unit foot}
+                        "Temperature" {:kind :single :value 68.0
+                                       :value-type :ifcthermodynamictemperaturemeasure
+                                       :unit fahrenheit}}}}}]})
+        output (ifc/rewrite-spf document)
+        imported (ifc/read-document output)
+        properties (get-in imported [:ifc/elements 0 :property-sets
+                                     "Pset_Units" :properties])]
+    (is (string/includes? output "IFCCONVERSIONBASEDUNITWITHOFFSET"))
+    (is (= "FOOT" (get-in properties ["Length" :unit :name])))
+    (is (= :conversion-based-with-offset
+           (get-in properties ["Temperature" :unit :kind])))
+    (is (= -459.67 (get-in properties ["Temperature" :unit
+                                       :conversion-offset])))
+    (is (:roundtrip/lossless? (ifc/roundtrip-report output)))))
+
 (deftest hybrid-export-splices-edited-geometry-without-dropping-unknown-entities
   #?(:clj
      (let [fixture (slurp (io/file "test/fixtures/revit-wall.ifc"))

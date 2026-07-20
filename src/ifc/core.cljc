@@ -45,6 +45,31 @@
                 (let [id (swap! next-id inc)]
                   (swap! entities conj (into [id type] args))
                   [:ref id]))
+        unit! (fn unit! [unit]
+                (case (:kind unit)
+                  :si
+                  (emit! :ifcsiunit :$ (:type unit) (or (:prefix unit) :$)
+                         (:name unit))
+
+                  (:conversion-based :conversion-based-with-offset)
+                  (let [dimensions (or (:dimensions unit) [1 0 0 0 0 0 0])
+                        dimension-ref (apply emit! :ifcdimensionalexponents dimensions)
+                        factor (:conversion-factor unit)
+                        base-ref (unit! (:unit factor))
+                        measure-ref (emit! :ifcmeasurewithunit
+                                           [:typed (or (:value-type factor) :ifcreal)
+                                            (:value factor)]
+                                           base-ref)
+                        arguments [dimension-ref (:type unit) (:name unit) measure-ref]]
+                    (apply emit!
+                           (if (= :conversion-based-with-offset (:kind unit))
+                             :ifcconversionbasedunitwithoffset
+                             :ifcconversionbasedunit)
+                           (cond-> arguments
+                             (= :conversion-based-with-offset (:kind unit))
+                             (conj (:conversion-offset unit)))))
+
+                  (throw (ex-info "unsupported IFC unit" {:unit unit}))))
         list* (fn [values] (into [:list] values))
         logical (fn [value] (if (#{:$ :*} value) value (boolean value)))
         logical-true (fn [value] (if (nil? value) true (logical value)))
@@ -393,11 +418,7 @@
                                                     :else :ifclabel))]
                            [:typed value-type
                             (if (= :ifcboolean value-type) (if value :t :f) value)]))
-        property-unit! (fn [unit]
-                         (if (= :si (:kind unit))
-                           (emit! :ifcsiunit :$ (:type unit)
-                                  (or (:prefix unit) :$) (:name unit))
-                           :$))
+        property-unit! (fn [unit] (if unit (unit! unit) :$))
         psets! (fn [product-ref element]
                  (doseq [[name pset] (:property-sets element)]
                    (let [properties
@@ -560,26 +581,6 @@
         georeference (or (:ifc/georeference document) (:georeference project))
         elements (:ifc/elements document)
         source-units (:ifc/units document)
-        unit! (fn unit! [unit]
-                (case (:kind unit)
-                  :si
-                  (emit! :ifcsiunit :$ (:type unit) (or (:prefix unit) :$)
-                         (:name unit))
-
-                  :conversion-based
-                  (let [dimensions (or (:dimensions unit)
-                                       [1 0 0 0 0 0 0])
-                        dimension-ref (apply emit! :ifcdimensionalexponents dimensions)
-                        factor (:conversion-factor unit)
-                        base-ref (unit! (:unit factor))
-                        measure-ref (emit! :ifcmeasurewithunit
-                                           [:typed (or (:value-type factor) :ifcreal)
-                                            (:value factor)]
-                                           base-ref)]
-                    (emit! :ifcconversionbasedunit dimension-ref (:type unit)
-                           (:name unit) measure-ref))
-
-                  (throw (ex-info "unsupported IFC unit" {:unit unit}))))
         unit-refs (if (seq source-units)
                     (mapv (fn [[unit-type unit]]
                             (unit! (assoc unit :type unit-type)))
@@ -1474,18 +1475,22 @@
       (let [unit-type (get-in entity [:args 1]) prefix (get-in entity [:args 2])]
         {:kind :si :type unit-type :prefix (when-not (= :$ prefix) prefix)
          :name (get-in entity [:args 3]) :scale (get unit-prefix-scale prefix 1.0)})
-      :ifcconversionbasedunit
+      (:ifcconversionbasedunit :ifcconversionbasedunitwithoffset)
       (let [dimensions (referenced table (get-in entity [:args 0]))
             factor (referenced table (get-in entity [:args 3]))
             factor-value (get-in factor [:args 0])]
-        {:kind :conversion-based :type (get-in entity [:args 1])
-         :name (get-in entity [:args 2])
-         :dimensions (when (= :ifcdimensionalexponents (:type dimensions))
-                       (vec (:args dimensions)))
-         :conversion-factor
-         {:value (typed-value factor-value)
-          :value-type (typed-value-type factor-value)
-          :unit (unit table (get-in factor [:args 1]))}})
+        (cond->
+         {:kind (if (= :ifcconversionbasedunitwithoffset (:type entity))
+                  :conversion-based-with-offset :conversion-based)
+          :type (get-in entity [:args 1]) :name (get-in entity [:args 2])
+          :dimensions (when (= :ifcdimensionalexponents (:type dimensions))
+                        (vec (:args dimensions)))
+          :conversion-factor
+          {:value (typed-value factor-value)
+           :value-type (typed-value-type factor-value)
+           :unit (unit table (get-in factor [:args 1]))}}
+          (= :ifcconversionbasedunitwithoffset (:type entity))
+          (assoc :conversion-offset (get-in entity [:args 4]))))
       nil)))
 
 (defn- project-units [table project-entity]
