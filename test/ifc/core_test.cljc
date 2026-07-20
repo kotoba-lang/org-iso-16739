@@ -173,7 +173,8 @@
         swept (first (filter #(= 180 (:id %)) (:ifc/elements document)))
         round-column (first (filter #(= 190 (:id %)) (:ifc/elements document)))
         edge-loop (first (filter #(= 210 (:id %)) (:ifc/elements document)))
-        circular-edge (first (filter #(= 260 (:id %)) (:ifc/elements document)))]
+        circular-edge (first (filter #(= 260 (:id %)) (:ifc/elements document)))
+        nurbs-edge (first (filter #(= 270 (:id %)) (:ifc/elements document)))]
     (is (= :external-spf (:ifc/source document)))
     (is (= [:ifcsite :ifcbuilding :ifcbuildingstorey]
            [(get-in project [:children 0 :type])
@@ -235,4 +236,11 @@
            (get-in circular-edge [:geometry :faces 0 :bounds 0 :edges 0 :curve :kind])))
     (is (= 24 (count (get-in circular-edge [:geometry :faces 0 :bounds 0 :points]))))
     (is (= [2.0 0.0 0.0]
-           (first (get-in circular-edge [:geometry :faces 0 :bounds 0 :points]))))))
+           (first (get-in circular-edge [:geometry :faces 0 :bounds 0 :points]))))
+    (is (= :b-spline-curve
+           (get-in nurbs-edge [:geometry :faces 0 :bounds 0 :edges 0 :curve :kind])))
+    (is (= [1.0 0.5 1.0]
+           (get-in nurbs-edge [:geometry :faces 0 :bounds 0 :edges 0 :curve :weights])))
+    (is (= 8 (count (get-in nurbs-edge [:geometry :faces 0 :bounds 0 :points]))))
+    (is (= [0.0 0.0 0.0]
+           (first (get-in nurbs-edge [:geometry :faces 0 :bounds 0 :points]))))))
