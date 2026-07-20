@@ -1,6 +1,7 @@
 (ns ifc.core
   "IFC 4.3 exchange over the shared kotoba-lang/step serializer."
   (:require [clojure.string :as string]
+            [clojure.walk :as walk]
             [brep.spline :as spline]
             [iso-10303.part21 :as part21]
             #?(:clj [clojure.edn :as edn] :cljs [cljs.reader :as edn])))
@@ -12,12 +13,19 @@
   {:wall :ifcwall :slab :ifcslab :column :ifccolumn :beam :ifcbeam
    :door :ifcdoor :window :ifcwindow :roof :ifcroof :stair :ifcstair
    :railing :ifcrailing :mep-segment :ifcdistributionflowelement
+   :duct-segment :ifcductsegment :pipe-segment :ifcpipesegment
+   :air-terminal :ifcairterminal :flow-fitting :ifcflowfitting
+   :flow-controller :ifcflowcontroller :flow-moving-device :ifcflowmovingdevice
+   :footing :ifcfooting :pile :ifcpile :member :ifcmember :plate :ifcplate
    :opening :ifcopeningelement :proxy :ifcbuildingelementproxy})
 
 (def type-entity-types
   {:wall :ifcwalltype :slab :ifcslabtype :column :ifccolumntype :beam :ifcbeamtype
    :door :ifcdoortype :window :ifcwindowtype :roof :ifcrooftype :stair :ifcstairtype
-   :railing :ifcrailingtype :proxy :ifcbuildingelementproxytype})
+   :railing :ifcrailingtype :duct-segment :ifcductsegmenttype
+   :pipe-segment :ifcpipesegmenttype :air-terminal :ifcairterminaltype
+   :footing :ifcfootingtype :pile :ifcpiletype :member :ifcmembertype
+   :plate :ifcplatetype :proxy :ifcbuildingelementproxytype})
 
 (defn exchange-document [{:keys [project elements]}]
   {:ifc/schema schema :ifc/contract-version contract-version
@@ -30,6 +38,8 @@
                   (swap! entities conj (into [id type] args))
                   [:ref id]))
         list* (fn [values] (into [:list] values))
+        logical (fn [value] (if (#{:$ :*} value) value (boolean value)))
+        logical-true (fn [value] (if (nil? value) true (logical value)))
         point! (fn [coordinates] (emit! :ifccartesianpoint (list* coordinates)))
         direction! (fn [ratios] (emit! :ifcdirection (list* ratios)))
         axis! (fn [placement]
@@ -38,6 +48,44 @@
                        (direction! (or (:axis placement) [0.0 0.0 1.0]))
                        (direction! (or (:ref-direction placement) [1.0 0.0 0.0]))))
         local! (fn [placement] (emit! :ifclocalplacement :$ (axis! placement)))
+        curve! (fn [curve]
+                 (case (:kind curve)
+                   :polyline (emit! :ifcpolyline (list* (mapv point! (:points curve))))
+                   :line (let [orientation (emit! :ifcvector
+                                                   (direction! (:direction curve))
+                                                   (or (:magnitude curve) 1.0))]
+                           (emit! :ifcline (point! (:origin curve)) orientation))
+                   :circle (emit! :ifccircle (axis! (:position curve)) (:radius curve))
+                   :ellipse (emit! :ifcellipse (axis! (:position curve))
+                                   (:semi-axis1 curve) (:semi-axis2 curve))
+                   :b-spline-curve
+                   (let [points (list* (mapv point! (:control-points curve)))
+                         args [(:degree curve) points (or (:curve-form curve) :unspecified)
+                               (logical (:closed curve)) (logical (:self-intersect curve))]]
+                     (if (seq (:knots curve))
+                       (let [knot-args (concat args
+                                               [(list* (:multiplicities curve))
+                                                (list* (:knots curve))
+                                                (or (:knot-spec curve) :unspecified)])]
+                         (if (seq (:weights curve))
+                           (apply emit! :ifcrationalbsplinecurvewithknots
+                                  (concat knot-args [(list* (:weights curve))]))
+                           (apply emit! :ifcbsplinecurvewithknots knot-args)))
+                       (apply emit! :ifcbsplinecurve args)))
+                   nil))
+        loop! (fn [bound]
+                (if (seq (:edges bound))
+                  (let [edges
+                        (mapv (fn [edge]
+                                (let [start (emit! :ifcvertexpoint (point! (:start edge)))
+                                      end (emit! :ifcvertexpoint (point! (:end edge)))
+                                      edge-curve (emit! :ifcedgecurve start end
+                                                        (curve! (:curve edge))
+                                                        (logical-true (:same-sense edge)))]
+                                  (emit! :ifcorientededge :$ :$ edge-curve true)))
+                              (:edges bound))]
+                    (emit! :ifcedgeloop (list* edges)))
+                  (emit! :ifcpolyloop (list* (mapv point! (:points bound))))))
         surface! (fn [surface]
                    (case (:kind surface)
                      :plane (emit! :ifcplane (axis! (:position surface)))
@@ -53,8 +101,8 @@
                        (if (seq (:u-knots surface))
                          (let [args [(:u-degree surface) (:v-degree surface) points
                                      (or (:surface-form surface) :unspecified)
-                                     (boolean (:u-closed surface)) (boolean (:v-closed surface))
-                                     (boolean (:self-intersect surface))
+                                     (logical (:u-closed surface)) (logical (:v-closed surface))
+                                     (logical (:self-intersect surface))
                                      (list* (:u-multiplicities surface))
                                      (list* (:v-multiplicities surface))
                                      (list* (:u-knots surface)) (list* (:v-knots surface))
@@ -66,8 +114,8 @@
                          (emit! :ifcbsplinesurface
                                 (:u-degree surface) (:v-degree surface) points
                                 (or (:surface-form surface) :unspecified)
-                                (boolean (:u-closed surface)) (boolean (:v-closed surface))
-                                (boolean (:self-intersect surface)))))
+                                (logical (:u-closed surface)) (logical (:v-closed surface))
+                                (logical (:self-intersect surface)))))
                      nil))
         geometry! (fn geometry! [geometry]
                     (case (:kind geometry)
@@ -107,11 +155,10 @@
                             (mapv (fn [face]
                                     (let [bounds
                                           (mapv (fn [bound]
-                                                  (let [loop-ref (emit! :ifcpolyloop
-                                                                        (list* (mapv point! (:points bound))))]
+                                                  (let [loop-ref (loop! bound)]
                                                     (emit! (if (= :outer (:kind bound))
                                                              :ifcfaceouterbound :ifcfacebound)
-                                                           loop-ref (not (false? (:orientation bound))))))
+                                                           loop-ref (logical-true (:orientation bound)))))
                                                 (:bounds face))]
                                       (emit! :ifcface (list* bounds))))
                                   (:faces geometry))
@@ -122,15 +169,14 @@
                             (mapv (fn [face]
                                     (let [bounds
                                           (mapv (fn [bound]
-                                                  (let [loop-ref (emit! :ifcpolyloop
-                                                                        (list* (mapv point! (:points bound))))]
+                                                  (let [loop-ref (loop! bound)]
                                                     (emit! (if (= :outer (:kind bound))
                                                              :ifcfaceouterbound :ifcfacebound)
-                                                           loop-ref (not (false? (:orientation bound))))))
+                                                           loop-ref (logical-true (:orientation bound)))))
                                                 (:bounds face))]
                                       (emit! :ifcadvancedface (list* bounds)
                                              (surface! (:surface face))
-                                             (not (false? (:same-sense face))))))
+                                             (logical-true (:same-sense face)))))
                                   (:faces geometry))
                             shell (emit! :ifcclosedshell (list* faces))]
                         (emit! :ifcadvancedbrep shell))
@@ -140,14 +186,68 @@
                         (emit! :ifctriangulatedfaceset coordinates
                                (if (seq (:normals geometry))
                                  (list* (mapv list* (:normals geometry))) :$)
-                               (boolean (:closed geometry))
+                               (logical (:closed geometry))
                                (list* (mapv list* (:coord-indices geometry))) :$))
-                      :collection (first (keep geometry! (:items geometry)))
+                      :polygonal-face-set
+                      (let [coordinates (emit! :ifccartesianpointlist3d
+                                               (list* (mapv list* (:coordinates geometry))))
+                            faces (mapv (fn [{:keys [outer inners]}]
+                                          (if (seq inners)
+                                            (emit! :ifcindexedpolygonalfacewithvoids
+                                                   (list* outer) (list* (mapv list* inners)))
+                                            (emit! :ifcindexedpolygonalface (list* outer))))
+                                        (:faces geometry))]
+                        (emit! :ifcpolygonalfaceset coordinates
+                               (logical (:closed geometry)) (list* faces)
+                               (if (seq (:pn-index geometry))
+                                 (list* (:pn-index geometry)) :$)))
+                      :half-space-solid
+                      (let [plane (surface! (:base-surface geometry))]
+                        (if (seq (:boundary geometry))
+                          (emit! :ifcpolygonalboundedhalfspace
+                                 plane (logical-true (:agreement-flag geometry))
+                                 (axis! (:position geometry))
+                                 (emit! :ifcpolyline
+                                        (list* (mapv point! (:boundary geometry)))))
+                          (emit! :ifchalfspacesolid
+                                 plane (logical-true (:agreement-flag geometry)))))
+                      :boolean-result
+                      (emit! :ifcbooleanresult (or (:operator geometry) :difference)
+                             (geometry! (:first-operand geometry))
+                             (geometry! (:second-operand geometry)))
+                      :mapped-item
+                      (let [source-item (geometry! (:source geometry))
+                            source-shape (emit! :ifcshaperepresentation
+                                                :$ "Body" "Body" (list* [source-item]))
+                            representation-map (emit! :ifcrepresentationmap
+                                                      (axis! (:mapping-origin geometry))
+                                                      source-shape)
+                            transform (:transform geometry)
+                            nonuniform? (or (not= 1.0 (:scale2 transform 1.0))
+                                            (not= 1.0 (:scale3 transform 1.0)))
+                            transform-ref
+                            (apply emit!
+                                   (if nonuniform?
+                                     :ifccartesiantransformationoperator3dnonuniform
+                                     :ifccartesiantransformationoperator3d)
+                                   (cond-> [(direction! (:axis1 transform))
+                                            (direction! (:axis2 transform))
+                                            (point! (:origin transform))
+                                            (or (:scale transform) 1.0)
+                                            (direction! (:axis3 transform))]
+                                     nonuniform?
+                                     (conj (or (:scale2 transform) 1.0)
+                                           (or (:scale3 transform) 1.0))))]
+                        (emit! :ifcmappeditem representation-map transform-ref))
+                      :collection nil
                       nil))
         product-shape! (fn [geometry]
-                         (when-let [item (geometry! geometry)]
-                           (let [shape (emit! :ifcshaperepresentation :$ "Body" "Body" (list* [item]))]
-                             (emit! :ifcproductdefinitionshape :$ :$ (list* [shape])))))
+                         (let [items (if (= :collection (:kind geometry))
+                                       (vec (keep geometry! (:items geometry)))
+                                       (some-> (geometry! geometry) vector))]
+                           (when (seq items)
+                             (let [shape (emit! :ifcshaperepresentation :$ "Body" "Body" (list* items))]
+                               (emit! :ifcproductdefinitionshape :$ :$ (list* [shape]))))))
         container-refs (atom {})
         spatial! (fn spatial! [node]
                    (let [type (:type node)
@@ -168,6 +268,12 @@
                                                   {:location [0.0 0.0 (or (:elevation node) 0.0)]})) :$ :$
                                       :element (or (:elevation node)
                                                    (get-in node [:placement :location 2]) 0.0))
+                               :ifcspace
+                               (emit! type (or (:global-id node) (str "SPACE_" (:id node))) :$
+                                      (:name node) :$ :$ (local! (:placement node)) :$
+                                      (or (:long-name node) :$) :element
+                                      (or (:predefined-type node) :notdefined)
+                                      (or (:elevation-with-flooring node) :$))
                                nil)
                          children (vec (keep spatial! (:children node)))]
                      (when ref
@@ -206,8 +312,9 @@
                           (or (:tag element) :$) :$))
         type! (fn [product-ref element]
                 (when-let [type-object (:type-object element)]
-                  (let [type-ref (emit! (get type-entity-types (:kind element)
-                                             :ifcbuildingelementproxytype)
+                  (let [type-ref (emit! (or (:ifc/type type-object)
+                                            (get type-entity-types (:kind element)
+                                                 :ifcbuildingelementproxytype))
                                         (or (:global-id type-object)
                                             (str "TYPE_" (:id type-object)))
                                         :$ (:name type-object) :$ :$ :$ :$ :$
@@ -217,10 +324,18 @@
                            (str "REL_TYPE_" (:id element)) :$ :$ :$
                            (list* [product-ref]) type-ref))))
         project (:ifc/project document)
-        georeference (:georeference project)
+        georeference (or (:ifc/georeference document) (:georeference project))
         elements (:ifc/elements document)
-        units (emit! :ifcunitassignment
-                     (list* [(emit! :ifcsiunit :$ :lengthunit :$ :metre)]))
+        source-units (:ifc/units document)
+        unit-refs (if (seq source-units)
+                    (mapv (fn [[unit-type unit]]
+                            (if (= :si (:kind unit))
+                              (emit! :ifcsiunit :$ unit-type (or (:prefix unit) :$)
+                                     (:name unit))
+                              (emit! :ifcsiunit :$ unit-type :$ (:name unit))))
+                          (sort-by (comp name key) source-units))
+                    [(emit! :ifcsiunit :$ :lengthunit :$ :metre)])
+        units (emit! :ifcunitassignment (list* unit-refs))
         world-axis (axis! {:location (or (:world-origin georeference) [0.0 0.0 0.0])})
         true-north (when-let [direction (:true-north georeference)] (direction! direction))
         context (emit! :ifcgeometricrepresentationcontext :$ "Model" 3 1.0e-5
@@ -251,8 +366,9 @@
         product-by-source (atom {})
         _product-refs
         (mapv (fn [element]
-                (let [ref (product! element (get entity-types (:kind element)
-                                                 :ifcbuildingelementproxy))]
+                (let [ref (product! element (or (:ifc/entity-type element)
+                                                (get entity-types (:kind element)
+                                                     :ifcbuildingelementproxy)))]
                   (swap! product-by-source assoc (:id element) ref)
                   (psets! ref element)
                   (type! ref element)
@@ -260,7 +376,12 @@
               elements)
         default-container (get @container-refs :default :$)
         _containment
-        (doseq [[container-id grouped] (group-by #(or (:container-id %) :default) elements)]
+        (doseq [[container-id grouped]
+                (group-by #(if (some? (:container-id %))
+                             (:container-id %)
+                             (when-not (= :external-spf (:ifc/source document)) :default))
+                          elements)
+                :when (some? container-id)]
           (let [refs (mapv #(get @product-by-source (:id %)) grouped)
                 container (if (= :default container-id) default-container
                               (get @container-refs container-id default-container))]
@@ -741,8 +862,10 @@
                         (filter #(= :ifcpropertyset (:type %)) entities)))]
     (reduce (fn [by-object relation]
               (let [pset (get sets (ref-id (get-in relation [:args 5])))]
-                (reduce #(assoc-in %1 [(ref-id %2) (:name pset)] pset)
-                        by-object (list-values (get-in relation [:args 4])))))
+                (if (and pset (:name pset))
+                  (reduce #(assoc-in %1 [(ref-id %2) (:name pset)] pset)
+                          by-object (list-values (get-in relation [:args 4])))
+                  by-object)))
             {} (filter #(= :ifcreldefinesbyproperties (:type %)) entities))))
 
 (defn- opening-relations [entities]
@@ -769,6 +892,7 @@
 
 (defn- product [table entity]
   {:id (:id entity) :global-id (get-in entity [:args 0])
+   :ifc/entity-type (:type entity)
    :name (or (get-in entity [:args 2]) (name (:type entity)))
    :kind (or (some (fn [[kind type]] (when (= type (:type entity)) kind)) entity-types) :other)
    :placement (local-placement table (get-in entity [:args 5]))
@@ -857,3 +981,66 @@
                           :elements []}))
     (catch #?(:clj Exception :cljs :default) _
       (read-external-spf text))))
+
+(defn- spatial-container-index [project]
+  (letfn [(visit [node]
+            (into {(:id node) (:global-id node)}
+                  (mapcat visit (:children node))))]
+    (visit project)))
+
+(defn- portable-semantic-value [value]
+  (walk/postwalk
+   (fn [node]
+     (if (map? node)
+       (dissoc node :id :container-id :filled-by)
+       node))
+   value))
+
+(defn semantic-fingerprint
+  "Stable external-exchange meaning, excluding regenerated STEP entity ids.
+
+  GlobalIds, hierarchy, placement, geometry, types, properties, openings,
+  units, and georeferencing remain part of the comparison."
+  [document]
+  (let [containers (spatial-container-index (:ifc/project document))
+        elements (mapv (fn [element]
+                         (portable-semantic-value
+                          (-> element
+                              (update :property-sets #(or % {}))
+                              (update :openings #(or % []))
+                              (assoc :container-global-id
+                                     (get containers (:container-id element))))))
+                       (:ifc/elements document))]
+    {:ifc/schema (:ifc/schema document)
+     :ifc/project (portable-semantic-value (:ifc/project document))
+     :ifc/units (portable-semantic-value (:ifc/units document))
+     :ifc/georeference (portable-semantic-value (:ifc/georeference document))
+     :ifc/elements (vec (sort-by (juxt :global-id :name) elements))}))
+
+(defn roundtrip-report
+  "Parse an external SPF, rewrite standard IFC, and compare exchange meaning."
+  [text]
+  (let [before (read-document text)
+        output (write-spf before)
+        after (read-document output)
+        expected (semantic-fingerprint before)
+        actual (semantic-fingerprint after)]
+    {:roundtrip/lossless? (= expected actual)
+     :roundtrip/input-schema (:ifc/schema before)
+     :roundtrip/output-schema (:ifc/schema after)
+     :roundtrip/input-elements (count (:ifc/elements before))
+     :roundtrip/output-elements (count (:ifc/elements after))
+     :roundtrip/expected expected :roundtrip/actual actual
+     :roundtrip/output output}))
+
+(defn corpus-report
+  "Run round-trip verification for `{label spf-text}` corpus entries."
+  [entries]
+  (let [files (into (sorted-map)
+                    (map (fn [[label text]] [label (roundtrip-report text)]))
+                    entries)]
+    {:corpus/files files
+     :corpus/file-count (count files)
+     :corpus/input-elements (reduce + (map :roundtrip/input-elements (vals files)))
+     :corpus/output-elements (reduce + (map :roundtrip/output-elements (vals files)))
+     :corpus/lossless? (every? :roundtrip/lossless? (vals files))}))
