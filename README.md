@@ -36,3 +36,16 @@ unsupported entities, appends regenerated placement/representation dependency
 graphs, and redirects the original GlobalId-bearing entity to the new geometry.
 `rewrite-spf` remains available when a deliberately clean standard-only export
 is required.
+
+## IDS validation
+
+`ifc.ids` evaluates buildingSMART IDS 1.0 applicability and requirements over
+the neutral IFC document. Entity, predefined type, attribute, property and
+quantity, classification, material, and spatial part-of facets support simple,
+enumeration, pattern, numeric-bound, and string-length restrictions together
+with required, optional, and prohibited cardinality. Reports retain the IFC
+GlobalId and every failed requirement for BCF/editor issue generation.
+
+On the JVM, `ifc.ids.xml/read-xml` and `write-xml` provide IDS 1.0 XML transport.
+The reader disables DTDs and external entities. The validation engine remains
+CLJC so browser, desktop, cloud, and CI use the same deterministic gate.
