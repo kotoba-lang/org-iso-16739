@@ -273,3 +273,58 @@
        (is (= 12 (:corpus/input-elements report)))
        (is (= (:corpus/input-elements report) (:corpus/output-elements report))))
      :cljs (is true)))
+
+(deftest external-schema-and-unknown-entities-use-byte-exact-passthrough
+  (let [text (str "ISO-10303-21;\nHEADER;\n"
+                  "FILE_DESCRIPTION(('CoordinationView'),'2;1');\n"
+                  "FILE_NAME('legacy.ifc','',('External'),('Vendor'),'','','');\n"
+                  "FILE_SCHEMA(('IFC2X3'));\nENDSEC;\nDATA;\n"
+                  "#1=IFCPROJECT('legacy-project',$,'Legacy Project',$,$,$,$,$,$);\n"
+                  "#2=IFCANNOTATION('unknown-object',$,'Vendor Annotation',$,$,$,$);\n"
+                  "ENDSEC;\nEND-ISO-10303-21;\n")
+        document (ifc/read-document text)]
+    (is (= "IFC2X3" (:ifc/schema document)))
+    (is (= 2 (:ifc/raw-entity-count document)))
+    (is (= text (ifc/write-spf document))
+        "an unedited external file, including unknown entities and headers, is byte exact")
+    (let [edited (assoc-in document [:ifc/project :name] "Renamed Project")
+          output (ifc/write-spf edited)]
+      (is (string/includes? output "FILE_SCHEMA(('IFC2X3'))"))
+      (is (string/includes? output "'Renamed Project'"))
+      (is (string/includes? output "IFCANNOTATION"))
+      (is (string/includes? output "'Vendor Annotation'"))
+      (is (= 2 (:ifc/raw-entity-count (ifc/read-document output)))
+          "hybrid export retains the unknown entity graph while applying the edit"))))
+
+(deftest forced-standard-rewrite-retains-ifc4-schema
+  (let [document (assoc (ifc/exchange-document
+                         {:project {:global-id "p" :name "IFC4 Project"}
+                          :elements []})
+                        :ifc/schema "IFC4")
+        output (ifc/rewrite-spf document)]
+    (is (string/includes? output "FILE_SCHEMA(('IFC4'))"))
+    (is (= "IFC4" (:ifc/schema (ifc/read-document output))))))
+
+(deftest hybrid-export-splices-edited-geometry-without-dropping-unknown-entities
+  #?(:clj
+     (let [fixture (slurp (io/file "test/fixtures/revit-wall.ifc"))
+           input (string/replace
+                  fixture "\nENDSEC;\nEND-ISO-10303-21;"
+                  "\n#999=IFCANNOTATION('vendor-extension',$,'Keep Me',$,$,$,$);\nENDSEC;\nEND-ISO-10303-21;")
+           document (ifc/read-document input)
+           edited (update document :ifc/elements
+                          (fn [elements]
+                            (mapv (fn [element]
+                                    (if (= "wall-guid-000000000001" (:global-id element))
+                                      (assoc-in element [:geometry :depth] 4.4)
+                                      element))
+                                  elements)))
+           output (ifc/write-spf edited)
+           reimported (ifc/read-document output)
+           wall (first (filter #(= "wall-guid-000000000001" (:global-id %))
+                               (:ifc/elements reimported)))]
+       (is (string/includes? output "IFCANNOTATION"))
+       (is (string/includes? output "'Keep Me'"))
+       (is (= 4.4 (get-in wall [:geometry :depth])))
+       (is (> (:ifc/raw-entity-count reimported) (:ifc/raw-entity-count document))))
+     :cljs (is true)))

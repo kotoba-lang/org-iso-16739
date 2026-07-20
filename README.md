@@ -25,3 +25,11 @@ regenerated STEP entity numbers. The writer currently covers IFC4.3 products
 used by the buildingSMART PCERT architecture, HVAC, and structural samples,
 including mapped geometry, boolean/half-space collections, tessellated and
 polygonal face sets, swept disks, and advanced BREP edge curves.
+
+Imported IFC2X3, IFC4, and IFC4.3 documents retain their source schema and raw
+entity graph. An unchanged document is returned byte-for-byte. When a modeled
+project or product is edited, hybrid export keeps the original vendor and
+unsupported entities, appends regenerated placement/representation dependency
+graphs, and redirects the original GlobalId-bearing entity to the new geometry.
+`rewrite-spf` remains available when a deliberately clean standard-only export
+is required.
