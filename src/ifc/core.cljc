@@ -560,12 +560,29 @@
         georeference (or (:ifc/georeference document) (:georeference project))
         elements (:ifc/elements document)
         source-units (:ifc/units document)
+        unit! (fn unit! [unit]
+                (case (:kind unit)
+                  :si
+                  (emit! :ifcsiunit :$ (:type unit) (or (:prefix unit) :$)
+                         (:name unit))
+
+                  :conversion-based
+                  (let [dimensions (or (:dimensions unit)
+                                       [1 0 0 0 0 0 0])
+                        dimension-ref (apply emit! :ifcdimensionalexponents dimensions)
+                        factor (:conversion-factor unit)
+                        base-ref (unit! (:unit factor))
+                        measure-ref (emit! :ifcmeasurewithunit
+                                           [:typed (or (:value-type factor) :ifcreal)
+                                            (:value factor)]
+                                           base-ref)]
+                    (emit! :ifcconversionbasedunit dimension-ref (:type unit)
+                           (:name unit) measure-ref))
+
+                  (throw (ex-info "unsupported IFC unit" {:unit unit}))))
         unit-refs (if (seq source-units)
                     (mapv (fn [[unit-type unit]]
-                            (if (= :si (:kind unit))
-                              (emit! :ifcsiunit :$ unit-type (or (:prefix unit) :$)
-                                     (:name unit))
-                              (emit! :ifcsiunit :$ unit-type :$ (:name unit))))
+                            (unit! (assoc unit :type unit-type)))
                           (sort-by (comp name key) source-units))
                     [(emit! :ifcsiunit :$ :lengthunit :$ :metre)])
         units (emit! :ifcunitassignment (list* unit-refs))
@@ -578,7 +595,9 @@
                           (emit! :ifcprojectedcrs (or (:name crs) "Undefined CRS")
                                  (or (:description crs) :$) (or (:geodetic-datum crs) :$)
                                  (or (:vertical-datum crs) :$) (or (:map-projection crs) :$)
-                                 (or (:map-zone crs) :$) :$)))
+                                 (or (:map-zone crs) :$)
+                                 (if-let [map-unit (:map-unit crs)]
+                                   (unit! map-unit) :$))))
         _map-conversion (when projected-crs
                           (let [arguments [context projected-crs
                                            (or (:eastings georeference) 0.0)
@@ -1446,6 +1465,8 @@
    :milli 1.0e-3 :micro 1.0e-6 :nano 1.0e-9 :pico 1.0e-12
    :femto 1.0e-15 :atto 1.0e-18})
 
+(declare typed-value-type)
+
 (defn- unit [table ref]
   (let [entity (referenced table ref)]
     (case (:type entity)
@@ -1454,8 +1475,17 @@
         {:kind :si :type unit-type :prefix (when-not (= :$ prefix) prefix)
          :name (get-in entity [:args 3]) :scale (get unit-prefix-scale prefix 1.0)})
       :ifcconversionbasedunit
-      {:kind :conversion-based :type (get-in entity [:args 1])
-       :name (get-in entity [:args 2]) :conversion-factor (get-in entity [:args 3])}
+      (let [dimensions (referenced table (get-in entity [:args 0]))
+            factor (referenced table (get-in entity [:args 3]))
+            factor-value (get-in factor [:args 0])]
+        {:kind :conversion-based :type (get-in entity [:args 1])
+         :name (get-in entity [:args 2])
+         :dimensions (when (= :ifcdimensionalexponents (:type dimensions))
+                       (vec (:args dimensions)))
+         :conversion-factor
+         {:value (typed-value factor-value)
+          :value-type (typed-value-type factor-value)
+          :unit (unit table (get-in factor [:args 1]))}})
       nil)))
 
 (defn- project-units [table project-entity]
@@ -1750,7 +1780,9 @@
        {:projected-crs {:name (get-in crs [:args 0]) :description (get-in crs [:args 1])
                         :geodetic-datum (get-in crs [:args 2])
                         :vertical-datum (get-in crs [:args 3])
-                        :map-projection (get-in crs [:args 4]) :map-zone (get-in crs [:args 5])}
+                        :map-projection (get-in crs [:args 4]) :map-zone (get-in crs [:args 5])
+                        :map-unit (when-not (= :$ (get-in crs [:args 6]))
+                                    (unit table (get-in crs [:args 6])))}
        :world-origin (get-in (axis-placement table (get-in context [:args 4])) [:location])
        :true-north (direction table (get-in context [:args 5]))
        :eastings (get-in conversion [:args 2]) :northings (get-in conversion [:args 3])
