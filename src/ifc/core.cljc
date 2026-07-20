@@ -13,6 +13,11 @@
    :railing :ifcrailing :mep-segment :ifcdistributionflowelement
    :opening :ifcopeningelement :proxy :ifcbuildingelementproxy})
 
+(def type-entity-types
+  {:wall :ifcwalltype :slab :ifcslabtype :column :ifccolumntype :beam :ifcbeamtype
+   :door :ifcdoortype :window :ifcwindowtype :roof :ifcrooftype :stair :ifcstairtype
+   :railing :ifcrailingtype :proxy :ifcbuildingelementproxytype})
+
 (defn exchange-document [{:keys [project elements]}]
   {:ifc/schema schema :ifc/contract-version contract-version
    :ifc/project project :ifc/elements (vec elements)})
@@ -79,32 +84,114 @@
                          (when-let [item (geometry! geometry)]
                            (let [shape (emit! :ifcshaperepresentation :$ "Body" "Body" (list* [item]))]
                              (emit! :ifcproductdefinitionshape :$ :$ (list* [shape])))))
+        container-refs (atom {})
+        spatial! (fn spatial! [node]
+                   (let [type (:type node)
+                         ref (case type
+                               :ifcsite (emit! type (or (:global-id node) (str "SITE_" (:id node))) :$
+                                               (:name node) :$ :$ (local! (:placement node)) :$ :$
+                                               :element :$ :$ :$ :$ :$)
+                               :ifcbuilding (emit! type (or (:global-id node) (str "BUILDING_" (:id node))) :$
+                                                   (:name node) :$ :$ (local! (:placement node)) :$ :$
+                                                   :element :$ :$ :$)
+                               :ifcbuildingstorey
+                               (emit! type (or (:global-id node) (str "STOREY_" (:id node))) :$
+                                      (:name node) :$ :$
+                                      (local! (or (:placement node)
+                                                  {:location [0.0 0.0 (or (:elevation node) 0.0)]})) :$ :$
+                                      :element (or (:elevation node)
+                                                   (get-in node [:placement :location 2]) 0.0))
+                               nil)
+                         children (vec (keep spatial! (:children node)))]
+                     (when ref
+                       (swap! container-refs assoc (:id node) ref)
+                       (when (= :ifcbuildingstorey type)
+                         (swap! container-refs assoc :default ref))
+                       (when (seq children)
+                         (emit! :ifcrelaggregates (str "REL_AGG_" (:id node)) :$ :$ :$
+                                ref (list* children))))
+                     ref))
+        property-value (fn [property]
+                         (let [value (:value property)
+                               value-type (or (:value-type property)
+                                              (cond (boolean? value) :ifcboolean
+                                                    (integer? value) :ifcinteger
+                                                    (number? value) :ifcreal
+                                                    :else :ifclabel))]
+                           [:typed value-type
+                            (if (= :ifcboolean value-type) (if value :t :f) value)]))
+        psets! (fn [product-ref element]
+                 (doseq [[name pset] (:property-sets element)]
+                   (let [properties (mapv (fn [[property-name property]]
+                                            (emit! :ifcpropertysinglevalue property-name
+                                                   (or (:description property) :$)
+                                                   (property-value property) :$))
+                                          (:properties pset))
+                         pset-ref (emit! :ifcpropertyset
+                                         (or (:global-id pset) (str "PSET_" (:id element) "_" name))
+                                         :$ name :$ (list* properties))]
+                     (emit! :ifcreldefinesbyproperties
+                            (str "REL_PSET_" (:id element) "_" name) :$ :$ :$
+                            (list* [product-ref]) pset-ref))))
+        product! (fn [element type]
+                   (emit! type (or (:global-id element) (str (:id element))) :$ (:name element) :$ :$
+                          (local! (:placement element)) (or (product-shape! (:geometry element)) :$)
+                          (or (:tag element) :$) :$))
+        type! (fn [product-ref element]
+                (when-let [type-object (:type-object element)]
+                  (let [type-ref (emit! (get type-entity-types (:kind element)
+                                             :ifcbuildingelementproxytype)
+                                        (or (:global-id type-object)
+                                            (str "TYPE_" (:id type-object)))
+                                        :$ (:name type-object) :$ :$ :$ :$ :$
+                                        (or (:element-type type-object) :$)
+                                        (or (:predefined-type type-object) :notdefined))]
+                    (emit! :ifcreldefinesbytype
+                           (str "REL_TYPE_" (:id element)) :$ :$ :$
+                           (list* [product-ref]) type-ref))))
         project (:ifc/project document)
         elements (:ifc/elements document)
         units (emit! :ifcunitassignment
                      (list* [(emit! :ifcsiunit :$ :lengthunit :$ :metre)]))
         project-ref (emit! :ifcproject (or (:global-id project) "KOTOBA_PROJECT") :$
                            (or (:name project) "Project") :$ :$ :$ :$ :$ units)
-        site-ref (emit! :ifcsite "KOTOBA_SITE" :$ "Site" :$ :$ (local! {}) :$ :$
-                        :element :$ :$ :$ :$ :$)
-        building-ref (emit! :ifcbuilding "KOTOBA_BUILDING" :$ "Building" :$ :$
-                            (local! {}) :$ :$ :element :$ :$ :$)
-        storey-ref (emit! :ifcbuildingstorey "KOTOBA_STOREY" :$ "Storey" :$ :$
-                          (local! {}) :$ :$ :element 0.0)
-        _ (emit! :ifcrelaggregates "KOTOBA_REL_PROJECT_SITE" :$ :$ :$ project-ref (list* [site-ref]))
-        _ (emit! :ifcrelaggregates "KOTOBA_REL_SITE_BUILDING" :$ :$ :$ site-ref (list* [building-ref]))
-        _ (emit! :ifcrelaggregates "KOTOBA_REL_BUILDING_STOREY" :$ :$ :$ building-ref (list* [storey-ref]))
-        product-refs
+        spatial-roots (or (seq (:children project))
+                          [{:id :site :type :ifcsite :name "Site" :children
+                            [{:id :building :type :ifcbuilding :name "Building" :children
+                              [{:id :storey :type :ifcbuildingstorey :name "Storey" :children []}]}]}])
+        spatial-refs (mapv spatial! spatial-roots)
+        _project-spatial (emit! :ifcrelaggregates "KOTOBA_REL_PROJECT_SPATIAL" :$ :$ :$
+                                project-ref (list* spatial-refs))
+        product-by-source (atom {})
+        _product-refs
         (mapv (fn [element]
-                (emit! (get entity-types (:kind element) :ifcbuildingelementproxy)
-                       (or (:global-id element) (str (:id element))) :$ (:name element) :$ :$
-                       (local! (:placement element)) (or (product-shape! (:geometry element)) :$)
-                       (or (:tag element) :$) :$))
+                (let [ref (product! element (get entity-types (:kind element)
+                                                 :ifcbuildingelementproxy))]
+                  (swap! product-by-source assoc (:id element) ref)
+                  (psets! ref element)
+                  (type! ref element)
+                  ref))
               elements)
-        _ (when (seq product-refs)
-            (emit! :ifcrelcontainedinspatialstructure "KOTOBA_REL_CONTAINMENT" :$ :$ :$
-                   (list* product-refs) storey-ref))
-        _ (when (some? (:model project))
+        default-container (get @container-refs :default :$)
+        _containment
+        (doseq [[container-id grouped] (group-by #(or (:container-id %) :default) elements)]
+          (let [refs (mapv #(get @product-by-source (:id %)) grouped)
+                container (if (= :default container-id) default-container
+                              (get @container-refs container-id default-container))]
+            (when (and (seq refs) (not= :$ container))
+              (emit! :ifcrelcontainedinspatialstructure (str "REL_CONTAIN_" container-id)
+                     :$ :$ :$ (list* refs) container))))
+        _openings
+        (doseq [host elements opening (:openings host)]
+          (let [opening-ref (product! opening :ifcopeningelement)
+                host-ref (get @product-by-source (:id host))]
+            (psets! opening-ref opening)
+            (emit! :ifcrelvoidselement (str "REL_VOID_" (:id host) "_" (:id opening))
+                   :$ :$ :$ host-ref opening-ref)
+            (when-let [fill-ref (get @product-by-source (:filled-by opening))]
+              (emit! :ifcrelfillselement (str "REL_FILL_" (:id opening))
+                     :$ :$ :$ opening-ref fill-ref))))
+        _payload (when (some? (:model project))
             (emit! :ifcpropertysinglevalue "KOTOBA_MODEL_EDN" :$
                    [:typed :ifctext (pr-str (:model project))] :$))]
     @entities))
@@ -385,6 +472,18 @@
                            (ref-id (get-in relation [:args 5]))])
                         (filter #(= :ifcrelfillselement (:type %)) entities)))})
 
+(defn- type-relations [table entities]
+  (reduce (fn [by-object relation]
+            (let [type-entity (referenced table (get-in relation [:args 5]))
+                  type-object {:id (:id type-entity) :ifc/type (:type type-entity)
+                               :global-id (get-in type-entity [:args 0])
+                               :name (get-in type-entity [:args 2])
+                               :element-type (get-in type-entity [:args 8])
+                               :predefined-type (get-in type-entity [:args 9])}]
+              (reduce #(assoc %1 (ref-id %2) type-object) by-object
+                      (list-values (get-in relation [:args 4])))))
+          {} (filter #(= :ifcreldefinesbytype (:type %)) entities)))
+
 (defn- product [table entity]
   {:id (:id entity) :global-id (get-in entity [:args 0])
    :name (or (get-in entity [:args 2]) (name (:type entity)))
@@ -419,6 +518,7 @@
         contained-by (containment entities)
         project-entity (first (filter #(= :ifcproject (:type %)) entities))
         psets-by-object (property-sets table entities)
+        types-by-object (type-relations table entities)
         {:keys [voids fills]} (opening-relations entities)
         raw-products (into {} (map (fn [entity] [(:id entity) (product table entity)]))
                            (filter #(contains? product-types (:type %)) entities))
@@ -427,11 +527,14 @@
                       (remove (fn [[_ value]] (= :opening (:kind value))))
                       (mapv (fn [[id value]]
                               (assoc value :container-id (get contained-by id)
+                                     :type-object (get types-by-object id)
                                      :property-sets (get psets-by-object id {})
                                      :openings
                                      (mapv (fn [opening-id]
                                              (assoc (get raw-products opening-id)
                                                     :filled-by (get fills opening-id)
+                                                    :filled-by-global-id
+                                                    (:global-id (get raw-products (get fills opening-id)))
                                                     :property-sets (get psets-by-object opening-id {})))
                                            (get openings-by-host id))))))]
     {:ifc/schema (:part21/schema parsed) :ifc/contract-version contract-version

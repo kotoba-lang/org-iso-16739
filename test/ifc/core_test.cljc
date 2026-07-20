@@ -16,10 +16,30 @@
 
 (deftest standard-ifc-geometry-round-trip
   (let [document (ifc/exchange-document
-                  {:project {:global-id "project-standard" :name "Standard Tower"}
+                  {:project {:global-id "project-standard" :name "Standard Tower"
+                             :children [{:id 20 :global-id "site-standard" :name "Tokyo Site"
+                                         :type :ifcsite :children
+                                         [{:id 21 :global-id "building-standard" :name "Main Building"
+                                           :type :ifcbuilding :children
+                                           [{:id 22 :global-id "storey-standard" :name "Level 01"
+                                             :type :ifcbuildingstorey :elevation 4.2
+                                             :children []}]}]}]}
                    :elements
                    [{:id 10 :global-id "wall-standard" :kind :wall :name "Standard Wall"
+                     :container-id 22
+                     :type-object {:id "wall-type-200" :global-id "wall-type-standard"
+                                   :name "Exterior 200mm" :element-type "Basic Wall"
+                                   :predefined-type :standard}
                      :placement {:location [4.0 5.0 0.0]}
+                     :property-sets {"Pset_WallCommon"
+                                     {:global-id "pset-wall-standard" :name "Pset_WallCommon"
+                                      :properties {"IsExternal" {:value true :value-type :ifcboolean}
+                                                   "FireRating" {:value "90 min" :value-type :ifclabel}}}}
+                     :openings [{:id 30 :global-id "opening-standard" :name "Door Opening"
+                                 :filled-by 13 :placement {:location [5.0 5.0 0.0]}
+                                 :geometry {:kind :extruded-area-solid
+                                            :profile {:kind :rectangle :x-dim 0.9 :y-dim 0.2}
+                                            :direction [0 0 1] :depth 2.1}}]
                      :geometry {:kind :extruded-area-solid
                                 :profile {:kind :arbitrary-closed :name "Wall Footprint"
                                           :points [[0.0 0.0] [3.0 0.0] [3.0 0.2]
@@ -34,7 +54,8 @@
                     {:id 12 :global-id "tess-standard" :kind :proxy :name "Tessellated"
                      :geometry {:kind :triangulated-face-set :closed true
                                 :coordinates [[0 0 0] [1 0 0] [0 1 0]]
-                                :coord-indices [[1 2 3]]}}]})
+                                :coord-indices [[1 2 3]]}}
+                    {:id 13 :global-id "door-standard" :kind :door :name "Door"}]})
         text (ifc/write-spf document)
         imported (ifc/read-document text)
         by-name (into {} (map (juxt :name identity) (:ifc/elements imported)))]
@@ -43,7 +64,21 @@
     (is (string/includes? text "IFCTRIANGULATEDFACESET"))
     (is (= :external-spf (:ifc/source imported)))
     (is (= "Standard Tower" (get-in imported [:ifc/project :name])))
+    (is (= "Tokyo Site" (get-in imported [:ifc/project :children 0 :name])))
+    (is (= "Main Building" (get-in imported [:ifc/project :children 0 :children 0 :name])))
+    (is (= "Level 01" (get-in imported [:ifc/project :children 0 :children 0 :children 0 :name])))
+    (is (= 4.2 (get-in imported [:ifc/project :children 0 :children 0 :children 0 :placement :location 2])))
     (is (= [4.0 5.0 0.0] (get-in by-name ["Standard Wall" :placement :location])))
+    (is (= "wall-type-standard"
+           (get-in by-name ["Standard Wall" :type-object :global-id])))
+    (is (= "Exterior 200mm" (get-in by-name ["Standard Wall" :type-object :name])))
+    (is (true? (get-in by-name ["Standard Wall" :property-sets
+                                "Pset_WallCommon" :properties "IsExternal" :value])))
+    (is (= "90 min" (get-in by-name ["Standard Wall" :property-sets
+                                     "Pset_WallCommon" :properties "FireRating" :value])))
+    (is (= :opening (get-in by-name ["Standard Wall" :openings 0 :kind])))
+    (is (= "door-standard"
+           (get-in by-name ["Standard Wall" :openings 0 :filled-by-global-id])))
     (is (= :arbitrary-closed
            (get-in by-name ["Standard Wall" :geometry :profile :kind])))
     (is (= 2.8 (get-in by-name ["Standard Wall" :geometry :depth])))
