@@ -396,14 +396,102 @@
      :position (when (= :ifcpolygonalboundedhalfspace (:type item))
                  (axis-placement table (get-in item [:args 2])))}))
 
+(defn- vertex-point [table ref]
+  (let [entity (referenced table ref)]
+    (when (= :ifcvertexpoint (:type entity))
+      (coordinates table (get-in entity [:args 0])))))
+
+(defn- curve [table ref]
+  (let [entity (referenced table ref)]
+    (case (:type entity)
+      :ifcpolyline {:kind :polyline
+                    :points (mapv #(coordinates table %)
+                                  (list-values (get-in entity [:args 0])))}
+      :ifcline (let [vector-entity (referenced table (get-in entity [:args 1]))]
+                 {:kind :line :origin (coordinates table (get-in entity [:args 0]))
+                  :direction (direction table (get-in vector-entity [:args 0]))
+                  :magnitude (get-in vector-entity [:args 1])})
+      :ifccircle {:kind :circle :position (axis-placement table (get-in entity [:args 0]))
+                  :radius (get-in entity [:args 1])}
+      :ifcellipse {:kind :ellipse :position (axis-placement table (get-in entity [:args 0]))
+                   :semi-axis1 (get-in entity [:args 1]) :semi-axis2 (get-in entity [:args 2])}
+      nil)))
+
+(defn- oriented-edge [table ref]
+  (let [entity (referenced table ref)
+        edge (referenced table (get-in entity [:args 2]))]
+    (when (and (= :ifcorientededge (:type entity)) (= :ifcedgecurve (:type edge)))
+      (let [orientation (get-in entity [:args 3])
+            edge-start (vertex-point table (get-in edge [:args 0]))
+            edge-end (vertex-point table (get-in edge [:args 1]))]
+        {:kind :edge-curve :orientation orientation
+         :start (if (false? orientation) edge-end edge-start)
+         :end (if (false? orientation) edge-start edge-end)
+         :curve (curve table (get-in edge [:args 2]))
+         :same-sense (get-in edge [:args 3])}))))
+
+(defn- dot [a b] (reduce + (map * a b)))
+(defn- subtract [a b] (mapv - a b))
+(defn- cross3 [[ax ay az] [bx by bz]]
+  [(- (* ay bz) (* az by)) (- (* az bx) (* ax bz)) (- (* ax by) (* ay bx))])
+(defn- length3 [v] (#?(:clj Math/sqrt :cljs js/Math.sqrt) (dot v v)))
+(defn- normalize3 [v]
+  (let [length (length3 v)] (if (pos? length) (mapv #(/ % length) v) [0.0 0.0 0.0])))
+
+(defn- sampled-edge-points [edge]
+  (let [curve (:curve edge)]
+    (if (#{:circle :ellipse} (:kind curve))
+      (let [position (:position curve) origin (or (:location position) [0.0 0.0 0.0])
+            z-axis (normalize3 (or (:axis position) [0.0 0.0 1.0]))
+            x-axis (normalize3 (or (:ref-direction position) [1.0 0.0 0.0]))
+            y-axis (normalize3 (cross3 z-axis x-axis))
+            angle (fn [point]
+                    (let [delta (subtract point origin)]
+                      (#?(:clj Math/atan2 :cljs js/Math.atan2)
+                       (dot delta y-axis) (dot delta x-axis))))
+            start-angle (angle (:start edge)) end-angle (angle (:end edge))
+            increasing? (= (false? (:orientation edge)) (false? (:same-sense edge)))
+            tau (* 2.0 #?(:clj Math/PI :cljs js/Math.PI))
+            raw-delta (- end-angle start-angle)
+            delta (cond
+                    (and increasing? (<= raw-delta 0.0)) (+ raw-delta tau)
+                    (and (not increasing?) (>= raw-delta 0.0)) (- raw-delta tau)
+                    :else raw-delta)
+            delta (if (< (#?(:clj Math/abs :cljs js/Math.abs) delta) 1.0e-9)
+                    (if increasing? tau (- tau)) delta)
+            segments (max 1 (long (#?(:clj Math/ceil :cljs js/Math.ceil)
+                                    (/ (#?(:clj Math/abs :cljs js/Math.abs) delta)
+                                       (/ #?(:clj Math/PI :cljs js/Math.PI) 12.0)))))
+            rx (if (= :circle (:kind curve)) (:radius curve) (:semi-axis1 curve))
+            ry (if (= :circle (:kind curve)) (:radius curve) (:semi-axis2 curve))]
+        (mapv (fn [i]
+                (let [theta (+ start-angle (* delta (/ i segments)))]
+                  (mapv + origin
+                        (mapv #(* rx (#?(:clj Math/cos :cljs js/Math.cos) theta) %) x-axis)
+                        (mapv #(* ry (#?(:clj Math/sin :cljs js/Math.sin) theta) %) y-axis))))
+              (range segments)))
+      [(:start edge)])))
+
+(defn- loop-data [table loop-entity]
+  (case (:type loop-entity)
+    :ifcpolyloop
+    {:loop-kind :polyloop
+     :points (mapv #(coordinates table %) (list-values (get-in loop-entity [:args 0])))}
+    :ifcedgeloop
+    (let [edges (vec (keep #(oriented-edge table %)
+                           (list-values (get-in loop-entity [:args 0]))))]
+      {:loop-kind :edge-loop :edges edges
+       :points (vec (mapcat sampled-edge-points edges))})
+    nil))
+
 (defn- face-bound [table ref]
   (let [entity (referenced table ref)
-        loop-entity (referenced table (get-in entity [:args 0]))]
-    (when (and (#{:ifcfacebound :ifcfaceouterbound} (:type entity))
-               (= :ifcpolyloop (:type loop-entity)))
-      {:kind (if (= :ifcfaceouterbound (:type entity)) :outer :inner)
-       :orientation (get-in entity [:args 1])
-       :points (mapv #(coordinates table %) (list-values (get-in loop-entity [:args 0])))})))
+        loop-entity (referenced table (get-in entity [:args 0]))
+        loop (loop-data table loop-entity)]
+    (when (and (#{:ifcfacebound :ifcfaceouterbound} (:type entity)) loop)
+      (merge {:kind (if (= :ifcfaceouterbound (:type entity)) :outer :inner)
+              :orientation (get-in entity [:args 1])}
+             loop))))
 
 (defn- faceted-brep [table item]
   (let [shell (referenced table (get-in item [:args 0]))]
