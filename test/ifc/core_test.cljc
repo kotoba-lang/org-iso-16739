@@ -17,8 +17,19 @@
 (deftest standard-ifc-geometry-round-trip
   (let [document (ifc/exchange-document
                   {:project {:global-id "project-standard" :name "Standard Tower"
+                             :georeference {:projected-crs {:name "EPSG:6677"
+                                                            :geodetic-datum "JGD2011"
+                                                            :map-projection "Japan Plane Rectangular CS IX"}
+                                            :world-origin [100.0 200.0 0.0]
+                                            :true-north [0.0 1.0]
+                                            :eastings 500000.0 :northings 3950000.0
+                                            :orthogonal-height 42.5
+                                            :x-axis-abscissa 0.8660254038
+                                            :x-axis-ordinate 0.5 :scale 1.0}
                              :children [{:id 20 :global-id "site-standard" :name "Tokyo Site"
-                                         :type :ifcsite :children
+                                         :type :ifcsite
+                                         :latitude [35 40 0 0] :longitude [139 45 0 0]
+                                         :elevation 42.5 :children
                                          [{:id 21 :global-id "building-standard" :name "Main Building"
                                            :type :ifcbuilding :children
                                            [{:id 22 :global-id "storey-standard" :name "Level 01"
@@ -74,6 +85,19 @@
     (is (= :external-spf (:ifc/source imported)))
     (is (= "Standard Tower" (get-in imported [:ifc/project :name])))
     (is (= "Tokyo Site" (get-in imported [:ifc/project :children 0 :name])))
+    (is (= [35.0 40.0 0.0 0.0]
+           (get-in imported [:ifc/project :children 0 :latitude])))
+    (is (= [139.0 45.0 0.0 0.0]
+           (get-in imported [:ifc/project :children 0 :longitude])))
+    (is (= 42.5 (get-in imported [:ifc/project :children 0 :elevation])))
+    (is (= "EPSG:6677" (get-in imported [:ifc/georeference :projected-crs :name])))
+    (is (= "JGD2011"
+           (get-in imported [:ifc/georeference :projected-crs :geodetic-datum])))
+    (is (= [100.0 200.0 0.0] (get-in imported [:ifc/georeference :world-origin])))
+    (is (= [0.0 1.0] (get-in imported [:ifc/georeference :true-north])))
+    (is (= 500000.0 (get-in imported [:ifc/georeference :eastings])))
+    (is (= 3950000.0 (get-in imported [:ifc/georeference :northings])))
+    (is (= 42.5 (get-in imported [:ifc/georeference :orthogonal-height])))
     (is (= "Main Building" (get-in imported [:ifc/project :children 0 :children 0 :name])))
     (is (= "Level 01" (get-in imported [:ifc/project :children 0 :children 0 :children 0 :name])))
     (is (= 4.2 (get-in imported [:ifc/project :children 0 :children 0 :children 0 :placement :location 2])))

@@ -105,7 +105,10 @@
                          ref (case type
                                :ifcsite (emit! type (or (:global-id node) (str "SITE_" (:id node))) :$
                                                (:name node) :$ :$ (local! (:placement node)) :$ :$
-                                               :element :$ :$ :$ :$ :$)
+                                               :element
+                                               (if (seq (:latitude node)) (list* (:latitude node)) :$)
+                                               (if (seq (:longitude node)) (list* (:longitude node)) :$)
+                                               (or (:elevation node) :$) :$ :$)
                                :ifcbuilding (emit! type (or (:global-id node) (str "BUILDING_" (:id node))) :$
                                                    (:name node) :$ :$ (local! (:placement node)) :$ :$
                                                    :element :$ :$ :$)
@@ -165,11 +168,30 @@
                            (str "REL_TYPE_" (:id element)) :$ :$ :$
                            (list* [product-ref]) type-ref))))
         project (:ifc/project document)
+        georeference (:georeference project)
         elements (:ifc/elements document)
         units (emit! :ifcunitassignment
                      (list* [(emit! :ifcsiunit :$ :lengthunit :$ :metre)]))
+        world-axis (axis! {:location (or (:world-origin georeference) [0.0 0.0 0.0])})
+        true-north (when-let [direction (:true-north georeference)] (direction! direction))
+        context (emit! :ifcgeometricrepresentationcontext :$ "Model" 3 1.0e-5
+                       world-axis (or true-north :$))
+        projected-crs (when georeference
+                        (let [crs (:projected-crs georeference)]
+                          (emit! :ifcprojectedcrs (or (:name crs) "Undefined CRS")
+                                 (or (:description crs) :$) (or (:geodetic-datum crs) :$)
+                                 (or (:vertical-datum crs) :$) (or (:map-projection crs) :$)
+                                 (or (:map-zone crs) :$) :$)))
+        _map-conversion (when projected-crs
+                          (emit! :ifcmapconversion context projected-crs
+                                 (or (:eastings georeference) 0.0)
+                                 (or (:northings georeference) 0.0)
+                                 (or (:orthogonal-height georeference) 0.0)
+                                 (or (:x-axis-abscissa georeference) 1.0)
+                                 (or (:x-axis-ordinate georeference) 0.0)
+                                 (or (:scale georeference) 1.0)))
         project-ref (emit! :ifcproject (or (:global-id project) "KOTOBA_PROJECT") :$
-                           (or (:name project) "Project") :$ :$ :$ :$ :$ units)
+                           (or (:name project) "Project") :$ :$ :$ (list* [context]) :$ units)
         spatial-roots (or (seq (:children project))
                           [{:id :site :type :ifcsite :name "Site" :children
                             [{:id :building :type :ifcbuilding :name "Building" :children
@@ -538,11 +560,35 @@
                             (list-values (get-in entity [:args 4])))))
                    (filter #(= :ifcrelcontainedinspatialstructure (:type %)) entities))))
 
+(defn- georeference [table entities]
+  (when-let [conversion (first (filter #(#{:ifcmapconversion :ifcmapconversionscaled}
+                                           (:type %)) entities))]
+    (let [context (referenced table (get-in conversion [:args 0]))
+          crs (referenced table (get-in conversion [:args 1]))]
+      {:projected-crs {:name (get-in crs [:args 0]) :description (get-in crs [:args 1])
+                       :geodetic-datum (get-in crs [:args 2])
+                       :vertical-datum (get-in crs [:args 3])
+                       :map-projection (get-in crs [:args 4]) :map-zone (get-in crs [:args 5])}
+       :world-origin (get-in (axis-placement table (get-in context [:args 4])) [:location])
+       :true-north (direction table (get-in context [:args 5]))
+       :eastings (get-in conversion [:args 2]) :northings (get-in conversion [:args 3])
+       :orthogonal-height (get-in conversion [:args 4])
+       :x-axis-abscissa (get-in conversion [:args 5])
+       :x-axis-ordinate (get-in conversion [:args 6]) :scale (get-in conversion [:args 7])})))
+
 (defn- spatial-node [table children id]
   (let [entity (get table id)]
-    {:id id :global-id (get-in entity [:args 0]) :name (get-in entity [:args 2])
-     :type (:type entity) :placement (local-placement table (get-in entity [:args 5]))
-     :children (mapv #(spatial-node table children %) (get children id))}))
+    (cond->
+     {:id id :global-id (get-in entity [:args 0]) :name (get-in entity [:args 2])
+      :type (:type entity) :placement (local-placement table (get-in entity [:args 5]))
+      :children (mapv #(spatial-node table children %) (get children id))}
+      (= :ifcsite (:type entity))
+      (assoc :latitude (when-not (= :$ (get-in entity [:args 9]))
+                         (list-values (get-in entity [:args 9])))
+             :longitude (when-not (= :$ (get-in entity [:args 10]))
+                          (list-values (get-in entity [:args 10])))
+             :elevation (when-not (= :$ (get-in entity [:args 11]))
+                          (get-in entity [:args 11]))))))
 
 (defn read-external-spf [text]
   (let [parsed (part21/parse-file text)
@@ -574,6 +620,7 @@
     {:ifc/schema (:part21/schema parsed) :ifc/contract-version contract-version
      :ifc/project (when project-entity (spatial-node table children (:id project-entity)))
      :ifc/units (project-units table project-entity)
+     :ifc/georeference (georeference table entities)
      :ifc/elements products :ifc/source :external-spf}))
 
 (defn read-document [text]
