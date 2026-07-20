@@ -87,7 +87,22 @@
                                                               :axis [0 0 1]}}
                                          :bounds [{:kind :outer :orientation true
                                                    :points [[1.5 0 0] [1.5 0 2]
-                                                            [-1.5 0 2] [-1.5 0 0]]}]}]}}]})
+                                                            [-1.5 0 2] [-1.5 0 0]]}]}
+                                        {:same-sense true
+                                         :surface {:kind :b-spline-surface
+                                                   :u-degree 1 :v-degree 1
+                                                   :control-points [[[0 0 0] [0 2 0]]
+                                                                    [[2 0 0] [2 2 1]]]
+                                                   :surface-form :unspecified
+                                                   :u-closed false :v-closed false
+                                                   :self-intersect false
+                                                   :u-multiplicities [2 2]
+                                                   :v-multiplicities [2 2]
+                                                   :u-knots [0.0 1.0] :v-knots [0.0 1.0]
+                                                   :knot-spec :piecewise-bezier-knots
+                                                   :weights [[1.0 1.0] [1.0 0.75]]}
+                                         :bounds [{:kind :outer :orientation true
+                                                   :points [[0 0 0] [2 0 0] [2 2 1] [0 2 0]]}]}]}}]})
         text (ifc/write-spf document)
         imported (ifc/read-document text)
         by-name (into {} (map (juxt :name identity) (:ifc/elements imported)))]
@@ -98,6 +113,7 @@
     (is (string/includes? text "IFCCIRCLEPROFILEDEF"))
     (is (string/includes? text "IFCADVANCEDBREP"))
     (is (string/includes? text "IFCCYLINDRICALSURFACE"))
+    (is (string/includes? text "IFCRATIONALBSPLINESURFACEWITHKNOTS"))
     (is (= :external-spf (:ifc/source imported)))
     (is (= "Standard Tower" (get-in imported [:ifc/project :name])))
     (is (= "Tokyo Site" (get-in imported [:ifc/project :children 0 :name])))
@@ -136,6 +152,10 @@
     (is (= :swept-disk-solid (get-in by-name ["Pipe" :geometry :kind])))
     (is (= :circle (get-in by-name ["Round Column" :geometry :profile :kind])))
     (is (= :advanced-brep (get-in by-name ["Advanced Body" :geometry :kind])))
+    (is (= :b-spline-surface
+           (get-in by-name ["Advanced Body" :geometry :faces 2 :surface :kind])))
+    (is (= [[1.0 1.0] [1.0 0.75]]
+           (get-in by-name ["Advanced Body" :geometry :faces 2 :surface :weights])))
     (is (= :plane (get-in by-name ["Advanced Body" :geometry :faces 0 :surface :kind])))
     (is (= :cylinder (get-in by-name ["Advanced Body" :geometry :faces 1 :surface :kind])))
     (is (= 1.5 (get-in by-name ["Advanced Body" :geometry :faces 1 :surface :radius])))))
