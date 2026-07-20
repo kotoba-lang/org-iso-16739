@@ -14,6 +14,26 @@
     (is (string/includes? text "IFCWALL"))
     (is (= model (ifc/read-spf text)))))
 
+(deftest curtain-wall-entity-and-type-use-formal-ifc-mappings
+  (let [document (ifc/exchange-document
+                  {:project {:global-id "curtain-project" :name "Curtain Project"}
+                   :elements [{:id 10 :global-id "curtain-10" :kind :curtain
+                               :name "South Curtain Wall"
+                               :type-object {:global-id "curtain-type-1"
+                                             :name "Unitized 1500"}
+                               :placement {:location [0 0 0]}
+                               :geometry {:kind :extruded-area-solid
+                                          :profile {:kind :rectangle
+                                                    :x-dim 6.0 :y-dim 0.15}
+                                          :direction [0 0 1] :depth 3.0}}]})
+        text (ifc/write-spf document)
+        imported (ifc/read-document text)]
+    (is (string/includes? text "IFCCURTAINWALL"))
+    (is (string/includes? text "IFCCURTAINWALLTYPE"))
+    (is (= :curtain (get-in imported [:ifc/elements 0 :kind])))
+    (is (= "curtain-type-1"
+           (get-in imported [:ifc/elements 0 :type-object :global-id])))))
+
 (deftest swept-profile-position-survives-standard-rewrite
   (let [profile-position {:location [2.5 -1.25] :ref-direction [0.0 1.0]}
         document (ifc/exchange-document
