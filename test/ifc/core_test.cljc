@@ -18,7 +18,8 @@
   (let [text #?(:clj (slurp (io/file "test/fixtures/revit-wall.ifc")) :cljs "")
         document (ifc/read-document text)
         project (:ifc/project document)
-        wall (first (:ifc/elements document))]
+        wall (first (filter #(= 100 (:id %)) (:ifc/elements document)))
+        mapped (first (filter #(= 130 (:id %)) (:ifc/elements document)))]
     (is (= :external-spf (:ifc/source document)))
     (is (= [:ifcsite :ifcbuilding :ifcbuildingstorey]
            [(get-in project [:children 0 :type])
@@ -35,4 +36,11 @@
     (is (= "2 HR" (get-in wall [:property-sets "Pset_WallCommon" :properties "FireRating" :value])))
     (is (= :opening (get-in wall [:openings 0 :kind])))
     (is (= [12.0 20.0 0.0] (get-in wall [:openings 0 :placement :location])))
-    (is (= 120 (get-in wall [:openings 0 :filled-by])))))
+    (is (= 120 (get-in wall [:openings 0 :filled-by])))
+    (is (= :proxy (:kind mapped)))
+    (is (= :mapped-item (get-in mapped [:geometry :kind])))
+    (is (= [5.0 6.0 0.0] (get-in mapped [:geometry :transform :origin])))
+    (is (= 2.0 (get-in mapped [:geometry :transform :scale])))
+    (is (= :arbitrary-closed (get-in mapped [:geometry :source :profile :kind])))
+    (is (= [[0.0 0.0] [2.0 0.0] [2.0 1.0] [0.0 1.0] [0.0 0.0]]
+           (get-in mapped [:geometry :source :profile :points])))))

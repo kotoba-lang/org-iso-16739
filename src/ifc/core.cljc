@@ -11,7 +11,7 @@
   {:wall :ifcwall :slab :ifcslab :column :ifccolumn :beam :ifcbeam
    :door :ifcdoor :window :ifcwindow :roof :ifcroof :stair :ifcstair
    :railing :ifcrailing :mep-segment :ifcdistributionflowelement
-   :opening :ifcopeningelement})
+   :opening :ifcopeningelement :proxy :ifcbuildingelementproxy})
 
 (defn exchange-document [{:keys [project elements]}]
   {:ifc/schema schema :ifc/contract-version contract-version
@@ -90,33 +90,72 @@
         (assoc relative :location (v+ (or (:location parent) [0.0 0.0 0.0])
                                       (or (:location relative) [0.0 0.0 0.0])))))))
 
-(defn- rectangle-profile [table ref]
+(defn- polyline [table ref]
   (when-let [entity (referenced table ref)]
-    (when (= :ifcrectangleprofiledef (:type entity))
+    (when (= :ifcpolyline (:type entity))
+      (mapv #(coordinates table %) (list-values (get-in entity [:args 0]))))))
+
+(defn- profile [table ref]
+  (when-let [entity (referenced table ref)]
+    (case (:type entity)
+      :ifcrectangleprofiledef
       {:kind :rectangle :profile-type (get-in entity [:args 0])
        :name (get-in entity [:args 1])
        :position (axis-placement table (get-in entity [:args 2]))
-       :x-dim (get-in entity [:args 3]) :y-dim (get-in entity [:args 4])})))
+       :x-dim (get-in entity [:args 3]) :y-dim (get-in entity [:args 4])}
+      :ifcarbitraryclosedprofiledef
+      {:kind :arbitrary-closed :profile-type (get-in entity [:args 0])
+       :name (get-in entity [:args 1])
+       :points (polyline table (get-in entity [:args 2]))}
+      nil)))
+
+(defn- shape-items [table shape-ref]
+  (let [shape (referenced table shape-ref)]
+    (when (= :ifcshaperepresentation (:type shape))
+      (list-values (get-in shape [:args 3])))))
 
 (defn- representation-items [table representation-ref]
   (when-let [product-shape (referenced table representation-ref)]
     (when (= :ifcproductdefinitionshape (:type product-shape))
-      (mapcat (fn [shape-ref]
-                (let [shape (referenced table shape-ref)]
-                  (when (= :ifcshaperepresentation (:type shape))
-                    (list-values (get-in shape [:args 3])))))
+      (mapcat (fn [shape-ref] (shape-items table shape-ref))
               (list-values (get-in product-shape [:args 2]))))))
 
+(defn- transformation [table ref]
+  (when-let [entity (referenced table ref)]
+    (when (#{:ifccartesiantransformationoperator3d
+             :ifccartesiantransformationoperator3dnonuniform} (:type entity))
+      {:axis1 (or (direction table (get-in entity [:args 0])) [1.0 0.0 0.0])
+       :axis2 (or (direction table (get-in entity [:args 1])) [0.0 1.0 0.0])
+       :origin (or (coordinates table (get-in entity [:args 2])) [0.0 0.0 0.0])
+       :scale (let [value (get-in entity [:args 3])] (if (= :$ value) 1.0 value))
+       :axis3 (or (direction table (get-in entity [:args 4])) [0.0 0.0 1.0])
+       :scale2 (let [value (get-in entity [:args 5])] (if (or (nil? value) (= :$ value)) 1.0 value))
+       :scale3 (let [value (get-in entity [:args 6])] (if (or (nil? value) (= :$ value)) 1.0 value))})))
+
+(declare geometry-item)
+(defn- mapped-geometry [table item]
+  (let [source (referenced table (get-in item [:args 0]))
+        source-items (when (= :ifcrepresentationmap (:type source))
+                       (shape-items table (get-in source [:args 1])))]
+    {:kind :mapped-item
+     :mapping-origin (axis-placement table (get-in source [:args 0]))
+     :transform (transformation table (get-in item [:args 1]))
+     :source (some #(geometry-item table %) source-items)}))
+
+(defn- geometry-item [table item-ref]
+  (let [item (referenced table item-ref)]
+    (case (:type item)
+      :ifcextrudedareasolid
+      {:kind :extruded-area-solid
+       :profile (profile table (get-in item [:args 0]))
+       :position (axis-placement table (get-in item [:args 1]))
+       :direction (direction table (get-in item [:args 2]))
+       :depth (get-in item [:args 3])}
+      :ifcmappeditem (mapped-geometry table item)
+      nil)))
+
 (defn product-geometry [table representation-ref]
-  (some (fn [item-ref]
-          (let [item (referenced table item-ref)]
-            (when (= :ifcextrudedareasolid (:type item))
-              {:kind :extruded-area-solid
-               :profile (rectangle-profile table (get-in item [:args 0]))
-               :position (axis-placement table (get-in item [:args 1]))
-               :direction (direction table (get-in item [:args 2]))
-               :depth (get-in item [:args 3])})))
-        (representation-items table representation-ref)))
+  (some #(geometry-item table %) (representation-items table representation-ref)))
 
 (def product-types (set (vals entity-types)))
 
