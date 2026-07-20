@@ -398,6 +398,47 @@
         (pr-str {:expected (:roundtrip/expected report)
                  :actual (:roundtrip/actual report)}))))
 
+(deftest presentation-style-and-layer-round-trip
+  (let [document
+        (ifc/exchange-document
+         {:project {:global-id "styled-project" :name "Styled Project"}
+          :elements
+          [{:id "styled-wall" :global-id "styled-wall-global" :kind :wall
+            :name "Styled Wall"
+            :geometry {:kind :extruded-area-solid
+                       :profile {:kind :rectangle :x-dim 4.0 :y-dim 0.2}
+                       :direction [0 0 1] :depth 3.0}
+            :appearance {:name "Brick Red" :color-name "Brick"
+                         :surface-color [0.7 0.15 0.1] :transparency 0.25
+                         :side :both :reflectance-method :matt}
+            :presentation-layers
+            [{:name "A-WALL-EXT" :description "External walls"
+              :identifier "A-WALL"}]}]})
+        text (ifc/write-spf document)
+        imported (ifc/read-document text)
+        report (ifc/roundtrip-report text)
+        edited (-> imported
+                   (assoc-in [:ifc/elements 0 :appearance :surface-color]
+                             [0.1 0.2 0.8])
+                   (assoc-in [:ifc/elements 0 :presentation-layers 0 :name]
+                             "A-WALL-EDITED"))
+        hybrid (ifc/read-document (ifc/write-spf edited))]
+    (is (string/includes? text "IFCSURFACESTYLERENDERING"))
+    (is (string/includes? text "IFCSTYLEDITEM"))
+    (is (string/includes? text "IFCPRESENTATIONLAYERASSIGNMENT"))
+    (is (= [0.7 0.15 0.1]
+           (get-in imported [:ifc/elements 0 :appearance :surface-color])))
+    (is (= 0.25 (get-in imported [:ifc/elements 0 :appearance :transparency])))
+    (is (= "A-WALL-EXT"
+           (get-in imported [:ifc/elements 0 :presentation-layers 0 :name])))
+    (is (= [0.1 0.2 0.8]
+           (get-in hybrid [:ifc/elements 0 :appearance :surface-color])))
+    (is (= "A-WALL-EDITED"
+           (get-in hybrid [:ifc/elements 0 :presentation-layers 0 :name])))
+    (is (:roundtrip/lossless? report)
+        (pr-str {:expected (:roundtrip/expected report)
+                 :actual (:roundtrip/actual report)}))))
+
 (deftest nested-local-placement-composes-parent-orientation
   (let [text (str "ISO-10303-21;\nHEADER;\n"
                   "FILE_DESCRIPTION(('ViewDefinition [DesignTransferView]'),'2;1');\n"
