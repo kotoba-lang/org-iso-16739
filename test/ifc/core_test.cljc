@@ -790,6 +790,30 @@
                                  :quantities "Length" :unit :name])))
     (is (:roundtrip/lossless? (ifc/roundtrip-report output)))))
 
+(deftest type-material-layer-sets-and-classifications-roundtrip
+  (let [document
+        (ifc/exchange-document
+         {:project {:global-id "typed-material-project" :name "Typed materials"}
+          :elements
+          [{:id 10 :global-id "typed-material-wall" :kind :wall :name "Wall"
+            :type-object
+            {:id 20 :global-id "typed-material-wall-type" :name "Composite Wall"
+             :element-type "Basic Wall" :predefined-type :standard
+             :material
+             {:kind :layer-set :name "Wall buildup"
+              :layers [{:material {:kind :material :name "Gypsum"} :thickness 0.013}
+                       {:material {:kind :material :name "Concrete"} :thickness 0.2}]}
+             :classifications
+             [{:identification "Ss_25_10_20" :name "Wall systems"
+               :source {:name "Uniclass 2015"}}]}}]})
+        output (ifc/rewrite-spf document)
+        type-object (get-in (ifc/read-document output) [:ifc/elements 0 :type-object])]
+    (is (= "Wall buildup" (get-in type-object [:material :name])))
+    (is (= [0.013 0.2] (mapv :thickness (get-in type-object [:material :layers]))))
+    (is (= "Concrete" (get-in type-object [:material :layers 1 :material :name])))
+    (is (= "Ss_25_10_20" (get-in type-object [:classifications 0 :identification])))
+    (is (:roundtrip/lossless? (ifc/roundtrip-report output)))))
+
 (deftest hybrid-export-splices-edited-geometry-without-dropping-unknown-entities
   #?(:clj
      (let [fixture (slurp (io/file "test/fixtures/revit-wall.ifc"))
