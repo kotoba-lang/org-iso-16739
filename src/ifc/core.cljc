@@ -69,6 +69,23 @@
                              (= :conversion-based-with-offset (:kind unit))
                              (conj (:conversion-offset unit)))))
 
+                  :derived
+                  (let [elements
+                        (mapv (fn [{:keys [unit exponent]}]
+                                (emit! :ifcderivedunitelement (unit! unit) exponent))
+                              (:elements unit))]
+                    (emit! :ifcderivedunit (into [:list] elements) (:type unit)
+                           (or (:user-defined-type unit) :$)))
+
+                  :monetary
+                  (emit! :ifcmonetaryunit (:currency unit))
+
+                  :context-dependent
+                  (let [dimensions (or (:dimensions unit) [0 0 0 0 0 0 0])]
+                    (emit! :ifccontextdependentunit
+                           (apply emit! :ifcdimensionalexponents dimensions)
+                           (:type unit) (:name unit)))
+
                   (throw (ex-info "unsupported IFC unit" {:unit unit}))))
         list* (fn [values] (into [:list] values))
         logical (fn [value] (if (#{:$ :*} value) value (boolean value)))
@@ -1491,6 +1508,27 @@
            :unit (unit table (get-in factor [:args 1]))}}
           (= :ifcconversionbasedunitwithoffset (:type entity))
           (assoc :conversion-offset (get-in entity [:args 4]))))
+
+      :ifcderivedunit
+      {:kind :derived :type (get-in entity [:args 1])
+       :user-defined-type (when-not (= :$ (get-in entity [:args 2]))
+                            (get-in entity [:args 2]))
+       :elements
+       (mapv (fn [element-ref]
+               (let [element (referenced table element-ref)]
+                 {:unit (unit table (get-in element [:args 0]))
+                  :exponent (get-in element [:args 1])}))
+             (list-values (get-in entity [:args 0])))}
+
+      :ifcmonetaryunit
+      {:kind :monetary :type :monetaryunit :currency (get-in entity [:args 0])}
+
+      :ifccontextdependentunit
+      (let [dimensions (referenced table (get-in entity [:args 0]))]
+        {:kind :context-dependent :type (get-in entity [:args 1])
+         :name (get-in entity [:args 2])
+         :dimensions (when (= :ifcdimensionalexponents (:type dimensions))
+                       (vec (:args dimensions)))})
       nil)))
 
 (defn- project-units [table project-entity]
