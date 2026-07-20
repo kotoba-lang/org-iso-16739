@@ -1044,7 +1044,16 @@
              :longitude (when-not (= :$ (get-in entity [:args 10]))
                           (list-values (get-in entity [:args 10])))
              :elevation (when-not (= :$ (get-in entity [:args 11]))
-                          (get-in entity [:args 11]))))))
+                          (get-in entity [:args 11])))
+
+      (= :ifcspace (:type entity))
+      (assoc :long-name (when-not (= :$ (get-in entity [:args 7]))
+                          (get-in entity [:args 7]))
+             :composition-type (get-in entity [:args 8])
+             :predefined-type (get-in entity [:args 9])
+             :elevation-with-flooring
+             (when-not (= :$ (get-in entity [:args 10]))
+               (get-in entity [:args 10]))))))
 
 (defn read-external-spf [text]
   (let [parsed (part21/parse-file text)

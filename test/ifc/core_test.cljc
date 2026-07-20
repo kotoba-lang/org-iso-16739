@@ -34,7 +34,12 @@
                                            :type :ifcbuilding :children
                                            [{:id 22 :global-id "storey-standard" :name "Level 01"
                                              :type :ifcbuildingstorey :elevation 4.2
-                                             :children []}]}]}]}
+                                             :children
+                                             [{:id 23 :global-id "space-standard"
+                                               :name "Office 101" :long-name "Open Office"
+                                               :type :ifcspace :predefined-type :internal
+                                               :elevation-with-flooring 4.25
+                                               :children []}]}]}]}]}
                    :elements
                    [{:id 10 :global-id "wall-standard" :kind :wall :name "Standard Wall"
                      :container-id 22
@@ -133,6 +138,15 @@
     (is (= "Main Building" (get-in imported [:ifc/project :children 0 :children 0 :name])))
     (is (= "Level 01" (get-in imported [:ifc/project :children 0 :children 0 :children 0 :name])))
     (is (= 4.2 (get-in imported [:ifc/project :children 0 :children 0 :children 0 :placement :location 2])))
+    (is (= "Open Office"
+           (get-in imported [:ifc/project :children 0 :children 0 :children 0
+                             :children 0 :long-name])))
+    (is (= :internal
+           (get-in imported [:ifc/project :children 0 :children 0 :children 0
+                             :children 0 :predefined-type])))
+    (is (= 4.25
+           (get-in imported [:ifc/project :children 0 :children 0 :children 0
+                             :children 0 :elevation-with-flooring])))
     (is (= [4.0 5.0 0.0] (get-in by-name ["Standard Wall" :placement :location])))
     (is (= "wall-type-standard"
            (get-in by-name ["Standard Wall" :type-object :global-id])))
