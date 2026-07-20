@@ -153,6 +153,25 @@
      :position (when (= :ifcpolygonalboundedhalfspace (:type item))
                  (axis-placement table (get-in item [:args 2])))}))
 
+(defn- face-bound [table ref]
+  (let [entity (referenced table ref)
+        loop-entity (referenced table (get-in entity [:args 0]))]
+    (when (and (#{:ifcfacebound :ifcfaceouterbound} (:type entity))
+               (= :ifcpolyloop (:type loop-entity)))
+      {:kind (if (= :ifcfaceouterbound (:type entity)) :outer :inner)
+       :orientation (get-in entity [:args 1])
+       :points (mapv #(coordinates table %) (list-values (get-in loop-entity [:args 0])))})))
+
+(defn- faceted-brep [table item]
+  (let [shell (referenced table (get-in item [:args 0]))]
+    (when (= :ifcclosedshell (:type shell))
+      {:kind :faceted-brep
+       :faces (mapv (fn [face-ref]
+                      (let [face (referenced table face-ref)]
+                        {:bounds (vec (keep #(face-bound table %)
+                                            (list-values (get-in face [:args 0]))))}))
+                    (list-values (get-in shell [:args 0])))})))
+
 (defn- geometry-item [table item-ref]
   (let [item (referenced table item-ref)]
     (case (:type item)
@@ -168,6 +187,7 @@
        :first-operand (geometry-item table (get-in item [:args 1]))
        :second-operand (geometry-item table (get-in item [:args 2]))}
       (:ifchalfspacesolid :ifcpolygonalboundedhalfspace) (half-space table item)
+      :ifcfacetedbrep (faceted-brep table item)
       nil)))
 
 (defn- geometry-items [table item-refs]
