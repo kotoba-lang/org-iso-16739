@@ -651,6 +651,41 @@
        (is (> (:ifc/raw-entity-count reimported) (:ifc/raw-entity-count document))))
      :cljs (is true)))
 
+(deftest hybrid-corpus-report-proves-semantic-and-opaque-entity-preservation
+  #?(:clj
+     (let [fixture (slurp (io/file "test/fixtures/revit-wall.ifc"))
+           input (string/replace
+                  fixture "\nENDSEC;\nEND-ISO-10303-21;"
+                  "\n#99999=IFCANNOTATION('vendor-extension',$,'Opaque Audit Marker',$,$,$,$);\nENDSEC;\nEND-ISO-10303-21;")
+           edit (fn [document]
+                  (update document :ifc/elements
+                          (fn [elements]
+                            (mapv (fn [element]
+                                    (if (= "wall-guid-000000000001" (:global-id element))
+                                      (assoc-in element [:geometry :depth] 4.75)
+                                      element))
+                                  elements))))
+           report (ifc/hybrid-roundtrip-report input edit)
+           corpus (ifc/hybrid-corpus-report
+                   {"revit-wall-edited" {:text input :edit edit}})]
+       (is (:roundtrip/semantic-lossless? report))
+       (is (:roundtrip/opaque-lossless? report))
+       (is (:roundtrip/lossless? report))
+       (is (= 2 (:roundtrip/opaque-input-count report)))
+       (is (= (:roundtrip/opaque-input-count report)
+              (:roundtrip/opaque-output-count report)))
+       (is (= :ifcannotation
+              (get-in report [:roundtrip/actual-opaque 99999 :type])))
+       (is (empty? (:roundtrip/opaque-missing-ids report)))
+       (is (string/includes? (:roundtrip/output report) "Opaque Audit Marker"))
+       (is (:corpus/semantic-lossless? corpus))
+       (is (:corpus/opaque-lossless? corpus))
+       (is (:corpus/lossless? corpus))
+       (is (= 2 (:corpus/opaque-input-count corpus)))
+       (is (= (:corpus/opaque-input-count corpus)
+              (:corpus/opaque-output-count corpus))))
+     :cljs (is true)))
+
 (deftest hybrid-export-reconciles-added-removed-and-retyped-products
   (let [source (ifc/exchange-document
                 {:project {:global-id "graph-project" :name "Graph Project"

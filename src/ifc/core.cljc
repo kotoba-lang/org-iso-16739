@@ -1891,6 +1891,56 @@
      :roundtrip/expected expected :roundtrip/actual actual
      :roundtrip/output output}))
 
+(defn- generated-entity-types [document]
+  (set (map second (standard-entities (dissoc document :ifc/raw-spf
+                                               :ifc/import-fingerprint
+                                               :ifc/raw-entities)))))
+
+(defn- opaque-entity-index [document managed-types]
+  (into (sorted-map)
+        (keep (fn [{:keys [id type args]}]
+                (when-not (contains? managed-types type)
+                  [id {:type type :args args}])))
+        (:ifc/raw-entities document)))
+
+(defn hybrid-roundtrip-report
+  "Apply an exchange-document edit, use provenance-aware hybrid export, and
+  verify both mapped IFC meaning and untouched opaque/vendor STEP entities.
+
+  `edit` is a pure document -> document function, suitable for real-file
+  differential corpus tests. Entity ids and arguments of opaque entities must
+  survive exactly; generated graph entities are compared semantically."
+  [text edit]
+  (let [before (read-document text)
+        edited (edit before)
+        managed-types (set/union (generated-entity-types before)
+                                 (generated-entity-types edited))
+        expected-opaque (opaque-entity-index before managed-types)
+        output (write-spf edited)
+        after (read-document output)
+        actual-opaque (select-keys (opaque-entity-index after managed-types)
+                                   (keys expected-opaque))
+        expected (semantic-fingerprint edited)
+        actual (semantic-fingerprint after)
+        semantic-lossless? (= expected actual)
+        opaque-lossless? (= expected-opaque actual-opaque)]
+    {:roundtrip/lossless? (and semantic-lossless? opaque-lossless?)
+     :roundtrip/semantic-lossless? semantic-lossless?
+     :roundtrip/opaque-lossless? opaque-lossless?
+     :roundtrip/export-mode :hybrid-edit
+     :roundtrip/input-schema (:ifc/schema before)
+     :roundtrip/output-schema (:ifc/schema after)
+     :roundtrip/input-elements (count (:ifc/elements before))
+     :roundtrip/output-elements (count (:ifc/elements after))
+     :roundtrip/opaque-input-count (count expected-opaque)
+     :roundtrip/opaque-output-count (count actual-opaque)
+     :roundtrip/opaque-missing-ids
+     (vec (remove (set (keys actual-opaque)) (keys expected-opaque)))
+     :roundtrip/expected expected :roundtrip/actual actual
+     :roundtrip/expected-opaque expected-opaque
+     :roundtrip/actual-opaque actual-opaque
+     :roundtrip/output output}))
+
 (defn corpus-report
   "Run round-trip verification for `{label spf-text}` corpus entries."
   [entries]
@@ -1901,4 +1951,26 @@
      :corpus/file-count (count files)
      :corpus/input-elements (reduce + (map :roundtrip/input-elements (vals files)))
      :corpus/output-elements (reduce + (map :roundtrip/output-elements (vals files)))
+     :corpus/lossless? (every? :roundtrip/lossless? (vals files))}))
+
+(defn hybrid-corpus-report
+  "Verify edited external IFC corpus entries.
+
+  Each value is `{:text spf-text :edit document->document}`."
+  [entries]
+  (let [files (into (sorted-map)
+                    (map (fn [[label {:keys [text edit]}]]
+                           [label (hybrid-roundtrip-report text edit)]))
+                    entries)]
+    {:corpus/files files
+     :corpus/file-count (count files)
+     :corpus/input-elements (reduce + (map :roundtrip/input-elements (vals files)))
+     :corpus/output-elements (reduce + (map :roundtrip/output-elements (vals files)))
+     :corpus/opaque-input-count
+     (reduce + (map :roundtrip/opaque-input-count (vals files)))
+     :corpus/opaque-output-count
+     (reduce + (map :roundtrip/opaque-output-count (vals files)))
+     :corpus/semantic-lossless?
+     (every? :roundtrip/semantic-lossless? (vals files))
+     :corpus/opaque-lossless? (every? :roundtrip/opaque-lossless? (vals files))
      :corpus/lossless? (every? :roundtrip/lossless? (vals files))}))
