@@ -278,6 +278,33 @@
                     :actual (:roundtrip/actual report)})))
      :cljs (is true)))
 
+(deftest nested-local-placement-composes-parent-orientation
+  (let [text (str "ISO-10303-21;\nHEADER;\n"
+                  "FILE_DESCRIPTION(('ViewDefinition [DesignTransferView]'),'2;1');\n"
+                  "FILE_NAME('rotated.ifc','',('Fixture'),('kotoba-lang'),'','','');\n"
+                  "FILE_SCHEMA(('IFC4X3_ADD2'));\nENDSEC;\nDATA;\n"
+                  "#1=IFCPROJECT('project',$,'Rotated Project',$,$,$,$,$,$);\n"
+                  "#10=IFCLOCALPLACEMENT($,#11);\n"
+                  "#11=IFCAXIS2PLACEMENT3D(#12,#13,#14);\n"
+                  "#12=IFCCARTESIANPOINT((10.,0.,0.));\n"
+                  "#13=IFCDIRECTION((0.,0.,1.));\n"
+                  "#14=IFCDIRECTION((0.,1.,0.));\n"
+                  "#20=IFCLOCALPLACEMENT(#10,#21);\n"
+                  "#21=IFCAXIS2PLACEMENT3D(#22,#13,#23);\n"
+                  "#22=IFCCARTESIANPOINT((2.,0.,0.));\n"
+                  "#23=IFCDIRECTION((1.,0.,0.));\n"
+                  "#100=IFCWALL('wall',$,'Rotated Wall',$,$,#20,$,'W-01',.SOLIDWALL.);\n"
+                  "ENDSEC;\nEND-ISO-10303-21;\n")
+        document (ifc/read-document text)
+        wall (first (:ifc/elements document))
+        reimported-wall (first (:ifc/elements
+                                (ifc/read-document (ifc/rewrite-spf document))))]
+    (is (= [10.0 2.0 0.0] (get-in wall [:placement :location])))
+    (is (= [0.0 0.0 1.0] (get-in wall [:placement :axis])))
+    (is (= [0.0 1.0 0.0] (get-in wall [:placement :ref-direction])))
+    (is (= (:placement wall) (:placement reimported-wall))
+        "standard rewrite keeps the composed world coordinate system")))
+
 (deftest corpus-report-aggregates-external-roundtrip-evidence
   #?(:clj
      (let [text (slurp (io/file "test/fixtures/revit-wall.ifc"))

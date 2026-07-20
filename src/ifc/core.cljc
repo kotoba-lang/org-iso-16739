@@ -598,17 +598,53 @@
        :ref-direction (or (direction table (get-in entity [:args 1])) [1.0 0.0])}
       nil)))
 
+(defn- vector3 [values]
+  (vec (take 3 (concat values (repeat 0.0)))))
+
 (defn- v+ [a b]
-  (mapv + (concat a (repeat (- 3 (count a)) 0.0))
-          (concat b (repeat (- 3 (count b)) 0.0))))
+  (mapv + (vector3 a) (vector3 b)))
+
+(defn- scale-vector [value vector]
+  (mapv #(* value %) vector))
+
+(defn- cross [[ax ay az] [bx by bz]]
+  [(- (* ay bz) (* az by))
+   (- (* az bx) (* ax bz))
+   (- (* ax by) (* ay bx))])
+
+(defn- normalize [vector fallback]
+  (let [vector (vector3 vector)
+        magnitude #?(:clj (Math/sqrt (reduce + (map #(* % %) vector)))
+                     :cljs (js/Math.sqrt (reduce + (map #(* % %) vector))))]
+    (if (pos? magnitude) (mapv #(/ % magnitude) vector) fallback)))
+
+(defn- placement-basis [placement]
+  (let [z (normalize (:axis placement) [0.0 0.0 1.0])
+        supplied-x (normalize (:ref-direction placement) [1.0 0.0 0.0])
+        y (normalize (cross z supplied-x) [0.0 1.0 0.0])
+        x (normalize (cross y z) [1.0 0.0 0.0])]
+    [x y z]))
+
+(defn- transform-vector [basis vector]
+  (reduce v+ [0.0 0.0 0.0]
+          (map scale-vector (vector3 vector) basis)))
+
+(defn- compose-placement [parent relative]
+  (if-not parent
+    relative
+    (let [basis (placement-basis parent)]
+      {:location (v+ (:location parent)
+                     (transform-vector basis (:location relative)))
+       :axis (normalize (transform-vector basis (:axis relative)) [0.0 0.0 1.0])
+       :ref-direction
+       (normalize (transform-vector basis (:ref-direction relative)) [1.0 0.0 0.0])})))
 
 (defn local-placement [table ref]
   (when-let [entity (referenced table ref)]
     (when (= :ifclocalplacement (:type entity))
       (let [parent (some->> (get-in entity [:args 0]) (local-placement table))
             relative (axis-placement table (get-in entity [:args 1]))]
-        (assoc relative :location (v+ (or (:location parent) [0.0 0.0 0.0])
-                                      (or (:location relative) [0.0 0.0 0.0])))))))
+        (compose-placement parent relative)))))
 
 (defn- polyline [table ref]
   (when-let [entity (referenced table ref)]
