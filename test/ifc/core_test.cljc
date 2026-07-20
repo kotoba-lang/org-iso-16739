@@ -668,6 +668,31 @@
     (is (= 1.0002 (get-in imported [:ifc/georeference :factor-z])))
     (is (:roundtrip/lossless? (ifc/roundtrip-report output)))))
 
+(deftest conversion-based-length-and-crs-map-units-roundtrip-semantically
+  (let [foot {:kind :conversion-based :type :lengthunit :name "FOOT"
+              :dimensions [1 0 0 0 0 0 0]
+              :conversion-factor
+              {:value 0.3048 :value-type :ifclengthmeasure
+               :unit {:kind :si :type :lengthunit :name :metre}}}
+        document (assoc (ifc/exchange-document
+                         {:project {:global-id "imperial-project" :name "Imperial"}
+                          :elements []})
+                        :ifc/units {:lengthunit foot}
+                        :ifc/georeference
+                        {:projected-crs {:name "Local feet" :map-unit foot}
+                         :eastings 1000.0 :northings 2000.0 :scale 1.0})
+        output (ifc/rewrite-spf document)
+        imported (ifc/read-document output)]
+    (is (string/includes? output "IFCCONVERSIONBASEDUNIT"))
+    (is (string/includes? output "IFCMEASUREWITHUNIT"))
+    (is (= 0.3048 (get-in imported [:ifc/units :lengthunit
+                                    :conversion-factor :value])))
+    (is (= :metre (get-in imported [:ifc/units :lengthunit
+                                    :conversion-factor :unit :name])))
+    (is (= "FOOT" (get-in imported [:ifc/georeference :projected-crs
+                                     :map-unit :name])))
+    (is (:roundtrip/lossless? (ifc/roundtrip-report output)))))
+
 (deftest hybrid-export-splices-edited-geometry-without-dropping-unknown-entities
   #?(:clj
      (let [fixture (slurp (io/file "test/fixtures/revit-wall.ifc"))
