@@ -19,7 +19,8 @@
         document (ifc/read-document text)
         project (:ifc/project document)
         wall (first (filter #(= 100 (:id %)) (:ifc/elements document)))
-        mapped (first (filter #(= 130 (:id %)) (:ifc/elements document)))]
+        mapped (first (filter #(= 130 (:id %)) (:ifc/elements document)))
+        clipped (first (filter #(= 140 (:id %)) (:ifc/elements document)))]
     (is (= :external-spf (:ifc/source document)))
     (is (= [:ifcsite :ifcbuilding :ifcbuildingstorey]
            [(get-in project [:children 0 :type])
@@ -43,4 +44,12 @@
     (is (= 2.0 (get-in mapped [:geometry :transform :scale])))
     (is (= :arbitrary-closed (get-in mapped [:geometry :source :profile :kind])))
     (is (= [[0.0 0.0] [2.0 0.0] [2.0 1.0] [0.0 1.0] [0.0 0.0]]
-           (get-in mapped [:geometry :source :profile :points])))))
+           (get-in mapped [:geometry :source :profile :points])))
+    (is (= :collection (get-in clipped [:geometry :kind])))
+    (is (= 2 (count (get-in clipped [:geometry :items]))))
+    (is (= :boolean-result (get-in clipped [:geometry :items 0 :kind])))
+    (is (= :difference (get-in clipped [:geometry :items 0 :operator])))
+    (is (= :half-space-solid
+           (get-in clipped [:geometry :items 0 :second-operand :kind])))
+    (is (= [10.0 20.0 1.5]
+           (get-in clipped [:geometry :items 0 :second-operand :base-surface :position :location])))))
