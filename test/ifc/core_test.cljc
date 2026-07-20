@@ -151,7 +151,9 @@
         tessellated (first (filter #(= 160 (:id %)) (:ifc/elements document)))
         polygonal (first (filter #(= 170 (:id %)) (:ifc/elements document)))
         swept (first (filter #(= 180 (:id %)) (:ifc/elements document)))
-        round-column (first (filter #(= 190 (:id %)) (:ifc/elements document)))]
+        round-column (first (filter #(= 190 (:id %)) (:ifc/elements document)))
+        edge-loop (first (filter #(= 210 (:id %)) (:ifc/elements document)))
+        circular-edge (first (filter #(= 260 (:id %)) (:ifc/elements document)))]
     (is (= :external-spf (:ifc/source document)))
     (is (= [:ifcsite :ifcbuilding :ifcbuildingstorey]
            [(get-in project [:children 0 :type])
@@ -201,4 +203,16 @@
            (get-in swept [:geometry :directrix])))
     (is (= 0.1 (get-in swept [:geometry :radius])))
     (is (= :circle (get-in round-column [:geometry :profile :kind])))
-    (is (= 0.25 (get-in round-column [:geometry :profile :radius])))))
+    (is (= 0.25 (get-in round-column [:geometry :profile :radius])))
+    (is (= :advanced-brep (get-in edge-loop [:geometry :kind])))
+    (is (= :edge-loop (get-in edge-loop [:geometry :faces 0 :bounds 0 :loop-kind])))
+    (is (= 4 (count (get-in edge-loop [:geometry :faces 0 :bounds 0 :edges]))))
+    (is (= [[0.0 0.0 0.0] [3.0 0.0 0.0] [3.0 2.0 0.0] [0.0 2.0 0.0]]
+           (get-in edge-loop [:geometry :faces 0 :bounds 0 :points])))
+    (is (= :polyline
+           (get-in edge-loop [:geometry :faces 0 :bounds 0 :edges 0 :curve :kind])))
+    (is (= :circle
+           (get-in circular-edge [:geometry :faces 0 :bounds 0 :edges 0 :curve :kind])))
+    (is (= 24 (count (get-in circular-edge [:geometry :faces 0 :bounds 0 :points]))))
+    (is (= [2.0 0.0 0.0]
+           (first (get-in circular-edge [:geometry :faces 0 :bounds 0 :points]))))))
