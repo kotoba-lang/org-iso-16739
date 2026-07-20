@@ -516,40 +516,42 @@
                      (emit! :ifcreldefinesbyproperties
                             (str "REL_QSET_" (:id element) "_" name) :$ :$ :$
                             (list* [product-ref]) qset-ref))))
-        material! (fn [material]
-                    (emit! :ifcmaterial (:name material)
-                           (or (:description material) :$)
-                           (or (:category material) :$)))
+        material-definition!
+        (fn material-definition! [assignment]
+          (case (:kind assignment)
+            :layer-set
+            (let [layers
+                  (mapv (fn [layer]
+                          (emit! :ifcmateriallayer
+                                 (if-let [material (:material layer)]
+                                   (material-definition! material) :$)
+                                 (:thickness layer)
+                                 (if (nil? (:ventilated layer)) :$
+                                     (logical (:ventilated layer)))
+                                 (or (:name layer) :$)
+                                 (or (:description layer) :$)
+                                 (or (:category layer) :$)
+                                 (or (:priority layer) :$)))
+                        (:layers assignment))]
+              (emit! :ifcmateriallayerset (list* layers)
+                     (or (:name assignment) :$)
+                     (or (:description assignment) :$)))
+
+            :layer-set-usage
+            (emit! :ifcmateriallayersetusage
+                   (material-definition! (assoc (:layer-set assignment) :kind :layer-set))
+                   (or (:direction assignment) :axis2)
+                   (or (:direction-sense assignment) :positive)
+                   (or (:offset assignment) 0.0)
+                   (or (:reference-extent assignment) :$))
+
+            (emit! :ifcmaterial (:name assignment)
+                   (or (:description assignment) :$)
+                   (or (:category assignment) :$))))
         material-association!
         (fn [product-ref element]
           (when-let [assignment (:material element)]
-            (let [material-ref
-                  (if (= :layer-set-usage (:kind assignment))
-                    (let [layer-set (:layer-set assignment)
-                          layers
-                          (mapv (fn [layer]
-                                  (emit! :ifcmateriallayer
-                                         (if-let [material (:material layer)]
-                                           (material! material) :$)
-                                         (:thickness layer)
-                                         (if (nil? (:ventilated layer)) :$
-                                             (logical (:ventilated layer)))
-                                         (or (:name layer) :$)
-                                         (or (:description layer) :$)
-                                         (or (:category layer) :$)
-                                         (or (:priority layer) :$)))
-                                (:layers layer-set))
-                          layer-set-ref
-                          (emit! :ifcmateriallayerset (list* layers)
-                                 (or (:name layer-set) :$)
-                                 (or (:description layer-set) :$))]
-                      (emit! :ifcmateriallayersetusage
-                             layer-set-ref
-                             (or (:direction assignment) :axis2)
-                             (or (:direction-sense assignment) :positive)
-                             (or (:offset assignment) 0.0)
-                             (or (:reference-extent assignment) :$)))
-                    (material! assignment))]
+            (let [material-ref (material-definition! assignment)]
               (emit! :ifcrelassociatesmaterial
                      (str "REL_MATERIAL_" (:id element)) :$ :$ :$
                      (list* [product-ref]) material-ref))))
@@ -592,6 +594,8 @@
                                         (if (seq type-psets) (list* type-psets) :$) :$ :$
                                         (or (:element-type type-object) :$)
                                         (or (:predefined-type type-object) :notdefined))]
+                    (material-association! type-ref type-object)
+                    (classification-associations! type-ref type-object)
                     (emit! :ifcreldefinesbytype
                            (str "REL_TYPE_" (:id element)) :$ :$ :$
                            (list* [product-ref]) type-ref))))
@@ -1720,7 +1724,7 @@
                            (ref-id (get-in relation [:args 5]))])
                         (filter #(= :ifcrelfillselement (:type %)) entities)))})
 
-(defn- type-relations [table entities psets-by-id]
+(defn- type-relations [table entities psets-by-id materials classifications]
   (reduce (fn [by-object relation]
             (let [type-entity (referenced table (get-in relation [:args 5]))
                   type-object {:id (:id type-entity) :ifc/type (:type type-entity)
@@ -1732,6 +1736,8 @@
                                              (when-let [pset (get psets-by-id (ref-id ref))]
                                                [(:name pset) pset])))
                                      (list-values (get-in type-entity [:args 5])))
+                               :material (get materials (:id type-entity))
+                               :classifications (get classifications (:id type-entity) [])
                                :element-type (get-in type-entity [:args 8])
                                :predefined-type (get-in type-entity [:args 9])}]
               (reduce #(assoc %1 (ref-id %2) type-object) by-object
@@ -1896,7 +1902,8 @@
                              :description (get-in entity [:args 3])
                              :properties properties}))
                         (filter #(= :ifcpropertyset (:type %)) entities))))
-        types-by-object (type-relations table entities psets-by-id)
+        types-by-object (type-relations table entities psets-by-id
+                                        materials classifications)
         presentation (presentation-indexes table entities)
         port-data (ports table entities)
         {:keys [voids fills]} (opening-relations entities)
