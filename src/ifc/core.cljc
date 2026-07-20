@@ -303,11 +303,35 @@
                         (emit! :ifcmappeditem representation-map transform-ref))
                       :collection nil
                       nil))
-        product-shape! (fn [geometry]
-                         (let [items (if (= :collection (:kind geometry))
+        presentation! (fn [items element]
+                        (when-let [appearance (:appearance element)]
+                          (let [[red green blue] (:surface-color appearance)
+                                colour (emit! :ifccolourrgb
+                                              (or (:color-name appearance) :$)
+                                              red green blue)
+                                rendering
+                                (emit! :ifcsurfacestylerendering colour
+                                       (or (:transparency appearance) 0.0)
+                                       :$ :$ :$ :$ :$ :$
+                                       (or (:reflectance-method appearance) :notdefined))
+                                style (emit! :ifcsurfacestyle
+                                             (or (:name appearance) "Surface Style")
+                                             (or (:side appearance) :both)
+                                             (list* [rendering]))]
+                            (doseq [item items]
+                              (emit! :ifcstyleditem item (list* [style])
+                                     (or (:name appearance) :$)))))
+                        (doseq [layer (:presentation-layers element)]
+                          (emit! :ifcpresentationlayerassignment
+                                 (:name layer) (or (:description layer) :$)
+                                 (list* items) (or (:identifier layer) :$))))
+        product-shape! (fn [element]
+                         (let [geometry (:geometry element)
+                               items (if (= :collection (:kind geometry))
                                        (vec (keep geometry! (:items geometry)))
                                        (some-> (geometry! geometry) vector))]
                            (when (seq items)
+                             (presentation! items element)
                              (let [shape (emit! :ifcshaperepresentation :$ "Body" "Body" (list* items))]
                                (emit! :ifcproductdefinitionshape :$ :$ (list* [shape]))))))
         container-refs (atom {})
@@ -502,7 +526,7 @@
                      :$ :$ :$ (list* [product-ref]) reference-ref))))
         product! (fn [element type]
                    (emit! type (or (:global-id element) (str (:id element))) :$ (:name element) :$ :$
-                          (local! (:placement element)) (or (product-shape! (:geometry element)) :$)
+                          (local! (:placement element)) (or (product-shape! element) :$)
                           (or (:tag element) :$) :$))
         type! (fn [product-ref element]
                 (when-let [type-object (:type-object element)]
@@ -692,6 +716,7 @@
   products against a regenerated semantic graph."
   [document]
   (let [raw (:ifc/raw-entities document)
+        raw-table (into {} (map (juxt :id identity)) raw)
         generated-vectors (standard-entities (dissoc document :ifc/raw-spf
                                                       :ifc/import-fingerprint))
         generated (mapv (fn [[id type & args]] {:id id :type type :args (vec args)})
@@ -743,6 +768,13 @@
                     (keep ref-id [(get-in replacement [:args 5])
                                   (get-in replacement [:args 6])])))
                 matched)
+        raw-geometry-roots
+        (mapcat (fn [[original _]]
+                  (if (= :ifcproject (:type original)) []
+                      (keep ref-id [(get-in original [:args 5])
+                                    (get-in original [:args 6])])))
+                matched)
+        raw-geometry-dependencies (dependency-ids raw-table raw-geometry-roots)
         reconciled-relation-types
         #{:ifcreldefinesbyproperties :ifcreldefinesbytype
           :ifcrelassociatesmaterial :ifcrelassociatesclassification
@@ -755,8 +787,19 @@
                                  (entity-refs entity))))
                   (:id entity)))
               generated)
+        geometry-dependencies (dependency-ids generated-table
+                                              (concat geometry-roots new-products))
+        presentation-types #{:ifcstyleditem :ifcpresentationlayerassignment}
+        presentation-roots
+        (keep (fn [entity]
+                (when (and (contains? presentation-types (:type entity))
+                           (seq (set/intersection geometry-dependencies
+                                                  (entity-refs entity))))
+                  (:id entity)))
+              generated)
         dependencies (dependency-ids generated-table
-                                     (concat geometry-roots new-products relation-roots))
+                                     (concat geometry-roots new-products relation-roots
+                                             presentation-roots))
         append-ids (remove #(contains? generated-to-raw %) dependencies)
         max-raw-id (reduce max 0 (map :id raw))
         id-map (into {} (map-indexed (fn [index id] [id (+ max-raw-id index 1)])
@@ -795,9 +838,14 @@
                                               (seq (set/intersection
                                                     matched-raw-ids
                                                     (entity-refs entity)))))))
+        removed-presentation? (fn [entity]
+                                (and (contains? presentation-types (:type entity))
+                                     (seq (set/intersection raw-geometry-dependencies
+                                                            (entity-refs entity)))))
         patched (->> raw
                      (remove #(or (contains? deleted-ids (:id %))
-                                  (removed-relationship? %)))
+                                  (removed-relationship? %)
+                                  (removed-presentation? %)))
                      (mapv #(get replacement-by-raw-id (:id %) %)))]
     (mapv (fn [{:keys [id type args]}] (into [id type] args))
           (concat patched appended))))
@@ -963,6 +1011,54 @@
     (when (= :ifcproductdefinitionshape (:type product-shape))
       (mapcat (fn [shape-ref] (shape-items table shape-ref))
               (list-values (get-in product-shape [:args 2]))))))
+
+(defn- surface-appearance [table style-ref]
+  (let [style (referenced table style-ref)
+        style (if (= :ifcpresentationstyleassignment (:type style))
+                (referenced table (first (list-values (get-in style [:args 0]))))
+                style)]
+    (when (= :ifcsurfacestyle (:type style))
+      (let [rendering (some #(let [candidate (referenced table %)]
+                               (when (#{:ifcsurfacestylerendering
+                                        :ifcsurfacestyleshading} (:type candidate))
+                                 candidate))
+                            (list-values (get-in style [:args 2])))
+            colour (referenced table (get-in rendering [:args 0]))]
+        (when (and rendering (= :ifccolourrgb (:type colour)))
+          {:name (get-in style [:args 0]) :side (get-in style [:args 1])
+           :color-name (get-in colour [:args 0])
+           :surface-color [(get-in colour [:args 1]) (get-in colour [:args 2])
+                           (get-in colour [:args 3])]
+           :transparency (if (= :ifcsurfacestylerendering (:type rendering))
+                           (get-in rendering [:args 1]) 0.0)
+           :reflectance-method
+           (when (= :ifcsurfacestylerendering (:type rendering))
+             (get-in rendering [:args 8]))})))))
+
+(defn- presentation-indexes [table entities]
+  (let [appearance
+        (into {}
+              (keep (fn [styled]
+                      (when-let [value
+                                 (some #(surface-appearance table %)
+                                       (list-values (get-in styled [:args 1])))]
+                        [(ref-id (get-in styled [:args 0])) value])))
+              (filter #(= :ifcstyleditem (:type %)) entities))
+        layers
+        (reduce (fn [result layer]
+                  (let [value {:name (get-in layer [:args 0])
+                               :description (get-in layer [:args 1])
+                               :identifier (get-in layer [:args 3])}]
+                    (reduce #(update %1 (ref-id %2) (fnil conj []) value)
+                            result (list-values (get-in layer [:args 2])))))
+                {} (filter #(= :ifcpresentationlayerassignment (:type %)) entities))]
+    {:appearance appearance :layers layers}))
+
+(defn- product-presentation [table representation-ref indexes]
+  (let [items (representation-items table representation-ref)]
+    {:appearance (some #(get-in indexes [:appearance (ref-id %)]) items)
+     :presentation-layers
+     (vec (distinct (mapcat #(get-in indexes [:layers (ref-id %)] []) items)))}))
 
 (defn- transformation [table ref]
   (when-let [entity (referenced table ref)]
@@ -1537,13 +1633,15 @@
                       (list-values (get-in relation [:args 4])))))
           {} (filter #(= :ifcreldefinesbytype (:type %)) entities)))
 
-(defn- product [table entity]
-  {:id (:id entity) :global-id (get-in entity [:args 0])
-   :ifc/entity-type (:type entity)
-   :name (or (get-in entity [:args 2]) (name (:type entity)))
-   :kind (or (some (fn [[kind type]] (when (= type (:type entity)) kind)) entity-types) :other)
-   :placement (local-placement table (get-in entity [:args 5]))
-   :geometry (product-geometry table (get-in entity [:args 6]))})
+(defn- product [table entity presentation]
+  (merge
+   {:id (:id entity) :global-id (get-in entity [:args 0])
+    :ifc/entity-type (:type entity)
+    :name (or (get-in entity [:args 2]) (name (:type entity)))
+    :kind (or (some (fn [[kind type]] (when (= type (:type entity)) kind)) entity-types) :other)
+    :placement (local-placement table (get-in entity [:args 5]))
+    :geometry (product-geometry table (get-in entity [:args 6]))}
+   (product-presentation table (get-in entity [:args 6]) presentation)))
 
 (defn- aggregates [entities]
   (into {} (map (fn [entity]
@@ -1669,9 +1767,10 @@
         materials (materials-by-object table entities)
         classifications (classifications-by-object table entities)
         types-by-object (type-relations table entities)
+        presentation (presentation-indexes table entities)
         port-data (ports table entities)
         {:keys [voids fills]} (opening-relations entities)
-        raw-products (into {} (map (fn [entity] [(:id entity) (product table entity)]))
+        raw-products (into {} (map (fn [entity] [(:id entity) (product table entity presentation)]))
                            (filter #(contains? product-types (:type %)) entities))
         openings-by-host (group-by voids (keys voids))
         products (->> raw-products
