@@ -17,24 +17,103 @@
   {:ifc/schema schema :ifc/contract-version contract-version
    :ifc/project project :ifc/elements (vec elements)})
 
-(defn write-spf [document]
-  (let [project (:ifc/project document)
+(defn- standard-entities [document]
+  (let [next-id (atom 0) entities (atom [])
+        emit! (fn [type & args]
+                (let [id (swap! next-id inc)]
+                  (swap! entities conj (into [id type] args))
+                  [:ref id]))
+        list* (fn [values] (into [:list] values))
+        point! (fn [coordinates] (emit! :ifccartesianpoint (list* coordinates)))
+        direction! (fn [ratios] (emit! :ifcdirection (list* ratios)))
+        axis! (fn [placement]
+                (emit! :ifcaxis2placement3d
+                       (point! (or (:location placement) [0.0 0.0 0.0]))
+                       (direction! (or (:axis placement) [0.0 0.0 1.0]))
+                       (direction! (or (:ref-direction placement) [1.0 0.0 0.0]))))
+        local! (fn [placement] (emit! :ifclocalplacement :$ (axis! placement)))
+        geometry! (fn geometry! [geometry]
+                    (case (:kind geometry)
+                      :extruded-area-solid
+                      (let [profile (:profile geometry)
+                            profile-ref
+                            (case (:kind profile)
+                              :rectangle (emit! :ifcrectangleprofiledef :area (or (:name profile) "Profile")
+                                                :$ (:x-dim profile) (:y-dim profile))
+                              :arbitrary-closed
+                              (let [points (mapv point! (:points profile))
+                                    curve (emit! :ifcpolyline (list* points))]
+                                (emit! :ifcarbitraryclosedprofiledef :area
+                                       (or (:name profile) "Profile") curve))
+                              nil)]
+                        (when profile-ref
+                          (emit! :ifcextrudedareasolid profile-ref (axis! (:position geometry))
+                                 (direction! (or (:direction geometry) [0.0 0.0 1.0]))
+                                 (:depth geometry))))
+                      :faceted-brep
+                      (let [faces
+                            (mapv (fn [face]
+                                    (let [bounds
+                                          (mapv (fn [bound]
+                                                  (let [loop-ref (emit! :ifcpolyloop
+                                                                        (list* (mapv point! (:points bound))))]
+                                                    (emit! (if (= :outer (:kind bound))
+                                                             :ifcfaceouterbound :ifcfacebound)
+                                                           loop-ref (not (false? (:orientation bound))))))
+                                                (:bounds face))]
+                                      (emit! :ifcface (list* bounds))))
+                                  (:faces geometry))
+                            shell (emit! :ifcclosedshell (list* faces))]
+                        (emit! :ifcfacetedbrep shell))
+                      :triangulated-face-set
+                      (let [coordinates (emit! :ifccartesianpointlist3d
+                                               (list* (mapv list* (:coordinates geometry))))]
+                        (emit! :ifctriangulatedfaceset coordinates
+                               (if (seq (:normals geometry))
+                                 (list* (mapv list* (:normals geometry))) :$)
+                               (boolean (:closed geometry))
+                               (list* (mapv list* (:coord-indices geometry))) :$))
+                      :collection (first (keep geometry! (:items geometry)))
+                      nil))
+        product-shape! (fn [geometry]
+                         (when-let [item (geometry! geometry)]
+                           (let [shape (emit! :ifcshaperepresentation :$ "Body" "Body" (list* [item]))]
+                             (emit! :ifcproductdefinitionshape :$ :$ (list* [shape])))))
+        project (:ifc/project document)
         elements (:ifc/elements document)
-        entities (concat
-                  [[1 :ifcproject (or (:global-id project) "KOTOBA_PROJECT") :$
-                    (:name project) :$ :$ :$ :$ :$ :$]]
-                  (map-indexed
-                   (fn [index element]
-                     [(+ 100 index) (get entity-types (:kind element) :ifcbuildingelementproxy)
-                      (or (:global-id element) (str (:id element))) :$ (:name element)
-                      :$ :$ :$ :$ :$])
-                   elements)
-                  [[900 :ifcpropertysinglevalue "KOTOBA_MODEL_EDN" :$
-                    [:typed :ifctext (pr-str (:model project))] :$]])]
-    (apply part21/file {:description "ViewDefinition [DesignTransferView]"
+        units (emit! :ifcunitassignment
+                     (list* [(emit! :ifcsiunit :$ :lengthunit :$ :metre)]))
+        project-ref (emit! :ifcproject (or (:global-id project) "KOTOBA_PROJECT") :$
+                           (or (:name project) "Project") :$ :$ :$ :$ :$ units)
+        site-ref (emit! :ifcsite "KOTOBA_SITE" :$ "Site" :$ :$ (local! {}) :$ :$
+                        :element :$ :$ :$ :$ :$)
+        building-ref (emit! :ifcbuilding "KOTOBA_BUILDING" :$ "Building" :$ :$
+                            (local! {}) :$ :$ :element :$ :$ :$)
+        storey-ref (emit! :ifcbuildingstorey "KOTOBA_STOREY" :$ "Storey" :$ :$
+                          (local! {}) :$ :$ :element 0.0)
+        _ (emit! :ifcrelaggregates "KOTOBA_REL_PROJECT_SITE" :$ :$ :$ project-ref (list* [site-ref]))
+        _ (emit! :ifcrelaggregates "KOTOBA_REL_SITE_BUILDING" :$ :$ :$ site-ref (list* [building-ref]))
+        _ (emit! :ifcrelaggregates "KOTOBA_REL_BUILDING_STOREY" :$ :$ :$ building-ref (list* [storey-ref]))
+        product-refs
+        (mapv (fn [element]
+                (emit! (get entity-types (:kind element) :ifcbuildingelementproxy)
+                       (or (:global-id element) (str (:id element))) :$ (:name element) :$ :$
+                       (local! (:placement element)) (or (product-shape! (:geometry element)) :$)
+                       (or (:tag element) :$) :$))
+              elements)
+        _ (when (seq product-refs)
+            (emit! :ifcrelcontainedinspatialstructure "KOTOBA_REL_CONTAINMENT" :$ :$ :$
+                   (list* product-refs) storey-ref))
+        _ (when (some? (:model project))
+            (emit! :ifcpropertysinglevalue "KOTOBA_MODEL_EDN" :$
+                   [:typed :ifctext (pr-str (:model project))] :$))]
+    @entities))
+
+(defn write-spf [document]
+  (apply part21/file {:description "ViewDefinition [DesignTransferView]"
                       :name "building.ifc" :schema schema
                       :author "KAMI" :org "kotoba-lang"}
-           entities)))
+         (standard-entities document)))
 
 (defn read-spf [text]
   (when-not (string/includes? text (str "FILE_SCHEMA(('" schema "'))"))
@@ -172,6 +251,45 @@
                                             (list-values (get-in face [:args 0]))))}))
                     (list-values (get-in shell [:args 0])))})))
 
+(defn- point-list [table ref]
+  (let [entity (referenced table ref)]
+    (when (#{:ifccartesianpointlist2d :ifccartesianpointlist3d} (:type entity))
+      (mapv list-values (list-values (get-in entity [:args 0]))))))
+
+(defn- index-list [value]
+  (mapv long (list-values value)))
+
+(defn- indexed-face [table ref]
+  (let [entity (referenced table ref)]
+    (case (:type entity)
+      :ifcindexedpolygonalface
+      {:outer (index-list (get-in entity [:args 0])) :inners []}
+      :ifcindexedpolygonalfacewithvoids
+      {:outer (index-list (get-in entity [:args 0]))
+       :inners (mapv index-list (list-values (get-in entity [:args 1])))}
+      nil)))
+
+(defn- tessellated-face-set [table item]
+  (case (:type item)
+    :ifctriangulatedfaceset
+    {:kind :triangulated-face-set
+     :coordinates (point-list table (get-in item [:args 0]))
+     :normals (when-not (= :$ (get-in item [:args 1]))
+                (mapv list-values (list-values (get-in item [:args 1]))))
+     :closed (get-in item [:args 2])
+     :coord-indices (mapv index-list (list-values (get-in item [:args 3])))
+     :normal-indices (when-not (= :$ (get-in item [:args 4]))
+                       (mapv index-list (list-values (get-in item [:args 4]))))}
+    :ifcpolygonalfaceset
+    {:kind :polygonal-face-set
+     :coordinates (point-list table (get-in item [:args 0]))
+     :closed (get-in item [:args 1])
+     :faces (vec (keep #(indexed-face table %)
+                       (list-values (get-in item [:args 2]))))
+     :pn-index (when-not (= :$ (get-in item [:args 3]))
+                 (index-list (get-in item [:args 3])))}
+    nil))
+
 (defn- geometry-item [table item-ref]
   (let [item (referenced table item-ref)]
     (case (:type item)
@@ -188,6 +306,7 @@
        :second-operand (geometry-item table (get-in item [:args 2]))}
       (:ifchalfspacesolid :ifcpolygonalboundedhalfspace) (half-space table item)
       :ifcfacetedbrep (faceted-brep table item)
+      (:ifctriangulatedfaceset :ifcpolygonalfaceset) (tessellated-face-set table item)
       nil)))
 
 (defn- geometry-items [table item-refs]
