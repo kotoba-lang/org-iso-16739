@@ -16,7 +16,8 @@
 (def entity-types
   {:wall :ifcwall :slab :ifcslab :column :ifccolumn :beam :ifcbeam
    :door :ifcdoor :window :ifcwindow :roof :ifcroof :stair :ifcstair
-   :railing :ifcrailing :mep-segment :ifcdistributionflowelement
+   :railing :ifcrailing :curtain :ifccurtainwall
+   :mep-segment :ifcdistributionflowelement
    :duct-segment :ifcductsegment :pipe-segment :ifcpipesegment
    :air-terminal :ifcairterminal :flow-fitting :ifcflowfitting
    :flow-controller :ifcflowcontroller :flow-moving-device :ifcflowmovingdevice
@@ -26,7 +27,8 @@
 (def type-entity-types
   {:wall :ifcwalltype :slab :ifcslabtype :column :ifccolumntype :beam :ifcbeamtype
    :door :ifcdoortype :window :ifcwindowtype :roof :ifcrooftype :stair :ifcstairtype
-   :railing :ifcrailingtype :duct-segment :ifcductsegmenttype
+   :railing :ifcrailingtype :curtain :ifccurtainwalltype
+   :duct-segment :ifcductsegmenttype
    :pipe-segment :ifcpipesegmenttype :air-terminal :ifcairterminaltype
    :footing :ifcfootingtype :pile :ifcpiletype :member :ifcmembertype
    :plate :ifcplatetype :proxy :ifcbuildingelementproxytype})
