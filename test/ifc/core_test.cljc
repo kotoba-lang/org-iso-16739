@@ -342,3 +342,46 @@
        (is (= 4.4 (get-in wall [:geometry :depth])))
        (is (> (:ifc/raw-entity-count reimported) (:ifc/raw-entity-count document))))
      :cljs (is true)))
+
+(deftest hybrid-export-reconciles-added-removed-and-retyped-products
+  (let [source (ifc/exchange-document
+                {:project {:global-id "graph-project" :name "Graph Project"
+                           :children [{:id 1 :global-id "graph-site" :name "Site"
+                                      :type :ifcsite :children
+                                      [{:id 2 :global-id "graph-building" :name "Building"
+                                        :type :ifcbuilding :children
+                                        [{:id 3 :global-id "graph-storey" :name "Level 1"
+                                          :type :ifcbuildingstorey :children []}]}]}]}
+                 :elements
+                 [{:id 10 :global-id "retained-product" :kind :wall :name "Retyped"
+                   :container-id 3 :placement {:location [0 0 0]}
+                   :geometry {:kind :extruded-area-solid
+                              :profile {:kind :rectangle :x-dim 0.4 :y-dim 0.4}
+                              :direction [0 0 1] :depth 3.0}}
+                  {:id 11 :global-id "deleted-product" :kind :door :name "Delete Me"
+                   :container-id 3}]})
+        external (string/replace
+                  (ifc/write-spf source) "\nENDSEC;\nEND-ISO-10303-21;"
+                  "\n#99999=IFCANNOTATION('vendor-extension',$,'Keep Graph Data',$,$,$,$);\nENDSEC;\nEND-ISO-10303-21;")
+        imported (ifc/read-document external)
+        container-id (:container-id (first (:ifc/elements imported)))
+        edited (update imported :ifc/elements
+                       (fn [elements]
+                         (conj (mapv #(assoc % :kind :column)
+                                     (remove #(= "deleted-product" (:global-id %)) elements))
+                               {:id "new-beam" :global-id "added-product"
+                                :kind :beam :name "Added Beam" :container-id container-id
+                                :placement {:location [1 2 3]}
+                                :geometry {:kind :extruded-area-solid
+                                           :profile {:kind :rectangle
+                                                     :x-dim 0.3 :y-dim 0.5}
+                                           :direction [1 0 0] :depth 4.0}})))
+        output (ifc/write-spf edited)
+        reimported (ifc/read-document output)
+        by-global (into {} (map (juxt :global-id identity) (:ifc/elements reimported)))]
+    (is (= :column (get-in by-global ["retained-product" :kind])))
+    (is (= :beam (get-in by-global ["added-product" :kind])))
+    (is (= [1.0 2.0 3.0] (get-in by-global ["added-product" :placement :location])))
+    (is (= 4.0 (get-in by-global ["added-product" :geometry :depth])))
+    (is (nil? (get by-global "deleted-product")))
+    (is (string/includes? output "'Keep Graph Data'"))))
