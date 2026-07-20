@@ -1,6 +1,7 @@
 (ns ifc.core-test
   (:require [clojure.string :as string]
             [clojure.test :refer [deftest is]]
+            #?(:clj [clojure.java.io :as io])
             [ifc.core :as ifc]))
 
 (deftest spf-round-trip
@@ -12,3 +13,20 @@
     (is (string/starts-with? text "ISO-10303-21;"))
     (is (string/includes? text "IFCWALL"))
     (is (= model (ifc/read-spf text)))))
+
+(deftest reads-external-spatial-hierarchy-and-extrusion
+  (let [text #?(:clj (slurp (io/file "test/fixtures/revit-wall.ifc")) :cljs "")
+        document (ifc/read-document text)
+        project (:ifc/project document)
+        wall (first (:ifc/elements document))]
+    (is (= :external-spf (:ifc/source document)))
+    (is (= [:ifcsite :ifcbuilding :ifcbuildingstorey]
+           [(get-in project [:children 0 :type])
+            (get-in project [:children 0 :children 0 :type])
+            (get-in project [:children 0 :children 0 :children 0 :type])]))
+    (is (= [10.0 20.0 0.0] (get-in wall [:placement :location])))
+    (is (= :rectangle (get-in wall [:geometry :profile :kind])))
+    (is (= 8.0 (get-in wall [:geometry :profile :x-dim])))
+    (is (= 0.25 (get-in wall [:geometry :profile :y-dim])))
+    (is (= 3.2 (get-in wall [:geometry :depth])))
+    (is (= 4 (:container-id wall)))))
