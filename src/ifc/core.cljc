@@ -288,28 +288,160 @@
                          (emit! :ifcrelaggregates (str "REL_AGG_" (:id node)) :$ :$ :$
                                 ref (list* children))))
                      ref))
-        property-value (fn [property]
-                         (let [value (:value property)
-                               value-type (or (:value-type property)
+        property-value (fn [value value-type]
+                         (let [value-type (or value-type
                                               (cond (boolean? value) :ifcboolean
                                                     (integer? value) :ifcinteger
                                                     (number? value) :ifcreal
                                                     :else :ifclabel))]
                            [:typed value-type
                             (if (= :ifcboolean value-type) (if value :t :f) value)]))
+        property-unit! (fn [unit]
+                         (if (= :si (:kind unit))
+                           (emit! :ifcsiunit :$ (:type unit)
+                                  (or (:prefix unit) :$) (:name unit))
+                           :$))
         psets! (fn [product-ref element]
                  (doseq [[name pset] (:property-sets element)]
-                   (let [properties (mapv (fn [[property-name property]]
-                                            (emit! :ifcpropertysinglevalue property-name
-                                                   (or (:description property) :$)
-                                                   (property-value property) :$))
-                                          (:properties pset))
+                   (let [properties
+                         (mapv
+                          (fn [[property-name property]]
+                            (let [description (or (:description property) :$)
+                                  typed #(property-value % (:value-type property))
+                                  unit-ref (property-unit! (:unit property))]
+                              (case (:kind property)
+                                :enumerated
+                                (let [enumeration (:enumeration property)
+                                      enumeration-ref
+                                      (when enumeration
+                                        (emit! :ifcpropertyenumeration
+                                               (:name enumeration)
+                                               (list* (mapv typed (:values enumeration)))
+                                               (property-unit! (:unit enumeration))))]
+                                  (emit! :ifcpropertyenumeratedvalue
+                                         property-name description
+                                         (if (seq (:values property))
+                                           (list* (mapv typed (:values property))) :$)
+                                         (or enumeration-ref :$)))
+
+                                :bounded
+                                (emit! :ifcpropertyboundedvalue
+                                       property-name description
+                                       (if (some? (:upper property))
+                                         (typed (:upper property)) :$)
+                                       (if (some? (:lower property))
+                                         (typed (:lower property)) :$)
+                                       unit-ref
+                                       (if (some? (:set-point property))
+                                         (typed (:set-point property)) :$))
+
+                                :list
+                                (emit! :ifcpropertylistvalue
+                                       property-name description
+                                       (if (seq (:values property))
+                                         (list* (mapv typed (:values property))) :$)
+                                       unit-ref)
+
+                                (emit! :ifcpropertysinglevalue property-name description
+                                       (property-value (:value property)
+                                                       (:value-type property))
+                                       unit-ref))))
+                          (:properties pset))
                          pset-ref (emit! :ifcpropertyset
                                          (or (:global-id pset) (str "PSET_" (:id element) "_" name))
                                          :$ name :$ (list* properties))]
                      (emit! :ifcreldefinesbyproperties
                             (str "REL_PSET_" (:id element) "_" name) :$ :$ :$
                             (list* [product-ref]) pset-ref))))
+        quantity-types {:length :ifcquantitylength :area :ifcquantityarea
+                        :volume :ifcquantityvolume :count :ifcquantitycount
+                        :weight :ifcquantityweight :time :ifcquantitytime
+                        :number :ifcquantitynumber}
+        quantity-unit! (fn [unit]
+                         (if-not unit
+                           :$
+                           (case (:kind unit)
+                             :si (emit! :ifcsiunit :$ (:type unit)
+                                        (or (:prefix unit) :$) (:name unit))
+                             :$)))
+        qsets! (fn [product-ref element]
+                 (doseq [[name qset] (:quantity-sets element)]
+                   (let [quantities
+                         (mapv (fn [[quantity-name quantity]]
+                                 (emit! (get quantity-types (:kind quantity)
+                                             :ifcquantitynumber)
+                                        quantity-name (or (:description quantity) :$)
+                                        (quantity-unit! (:unit quantity))
+                                        (:value quantity) (or (:formula quantity) :$)))
+                               (:quantities qset))
+                         qset-ref
+                         (emit! :ifcelementquantity
+                                (or (:global-id qset)
+                                    (str "QSET_" (:id element) "_" name))
+                                :$ name (or (:description qset) :$)
+                                (or (:method-of-measurement qset) :$)
+                                (list* quantities))]
+                     (emit! :ifcreldefinesbyproperties
+                            (str "REL_QSET_" (:id element) "_" name) :$ :$ :$
+                            (list* [product-ref]) qset-ref))))
+        material! (fn [material]
+                    (emit! :ifcmaterial (:name material)
+                           (or (:description material) :$)
+                           (or (:category material) :$)))
+        material-association!
+        (fn [product-ref element]
+          (when-let [assignment (:material element)]
+            (let [material-ref
+                  (if (= :layer-set-usage (:kind assignment))
+                    (let [layer-set (:layer-set assignment)
+                          layers
+                          (mapv (fn [layer]
+                                  (emit! :ifcmateriallayer
+                                         (if-let [material (:material layer)]
+                                           (material! material) :$)
+                                         (:thickness layer)
+                                         (if (nil? (:ventilated layer)) :$
+                                             (logical (:ventilated layer)))
+                                         (or (:name layer) :$)
+                                         (or (:description layer) :$)
+                                         (or (:category layer) :$)
+                                         (or (:priority layer) :$)))
+                                (:layers layer-set))
+                          layer-set-ref
+                          (emit! :ifcmateriallayerset (list* layers)
+                                 (or (:name layer-set) :$)
+                                 (or (:description layer-set) :$))]
+                      (emit! :ifcmateriallayersetusage
+                             layer-set-ref
+                             (or (:direction assignment) :axis2)
+                             (or (:direction-sense assignment) :positive)
+                             (or (:offset assignment) 0.0)
+                             (or (:reference-extent assignment) :$)))
+                    (material! assignment))]
+              (emit! :ifcrelassociatesmaterial
+                     (str "REL_MATERIAL_" (:id element)) :$ :$ :$
+                     (list* [product-ref]) material-ref))))
+        classification-associations!
+        (fn [product-ref element]
+          (doseq [[index classification] (map-indexed vector (:classifications element))]
+            (let [source (:source classification)
+                  source-ref
+                  (emit! :ifcclassification
+                         (or (:source source) :$) (or (:edition source) :$)
+                         (or (:edition-date source) :$) (:name source)
+                         (or (:description source) :$) (or (:specification source) :$)
+                         (if (seq (:reference-tokens source))
+                           (list* (:reference-tokens source)) :$))
+                  reference-ref
+                  (emit! :ifcclassificationreference
+                         (or (:location classification) :$)
+                         (or (:identification classification) :$)
+                         (or (:name classification) :$) source-ref
+                         (or (:description classification) :$)
+                         (or (:sort classification) :$))]
+              (emit! :ifcrelassociatesclassification
+                     (str "REL_CLASSIFICATION_" (:id element) "_" index)
+                     :$ :$ :$ (list* [product-ref]) reference-ref))))
         product! (fn [element type]
                    (emit! type (or (:global-id element) (str (:id element))) :$ (:name element) :$ :$
                           (local! (:placement element)) (or (product-shape! (:geometry element)) :$)
@@ -380,6 +512,9 @@
                       ref (product! element entity-type)]
                   (swap! product-by-source assoc (:id element) ref)
                   (psets! ref element)
+                  (qsets! ref element)
+                  (material-association! ref element)
+                  (classification-associations! ref element)
                   (type! ref element)
                   ref))
               elements)
@@ -468,6 +603,8 @@
                         (when-let [replacement (get generated-by-global global-id)]
                           [original replacement]))
                       raw-by-global)
+        matched-raw-ids (set (map (comp :id first) matched))
+        matched-generated-ids (set (map (comp :id second) matched))
         deleted (keep (fn [[global-id entity]]
                         (when (and (contains? product-types (:type entity))
                                    (not (contains? generated-by-global global-id)))
@@ -492,12 +629,17 @@
                     (keep ref-id [(get-in replacement [:args 5])
                                   (get-in replacement [:args 6])])))
                 matched)
-        relation-roots (keep (fn [entity]
-                               (when (and (relationship? entity)
-                                          (seq (set/intersection new-product-ids
-                                                                 (entity-refs entity))))
-                                 (:id entity)))
-                             generated)
+        reconciled-relation-types
+        #{:ifcreldefinesbyproperties :ifcreldefinesbytype
+          :ifcrelassociatesmaterial :ifcrelassociatesclassification}
+        relation-roots
+        (keep (fn [entity]
+                (when (and (contains? reconciled-relation-types (:type entity))
+                           (seq (set/intersection
+                                 (set/union matched-generated-ids new-product-ids)
+                                 (entity-refs entity))))
+                  (:id entity)))
+              generated)
         dependencies (dependency-ids generated-table
                                      (concat geometry-roots new-products relation-roots))
         append-ids (remove #(contains? generated-to-raw %) dependencies)
@@ -524,8 +666,13 @@
               matched)
         removed-relationship? (fn [entity]
                                 (and (relationship? entity)
-                                     (seq (set/intersection deleted-ids
-                                                            (entity-refs entity)))))
+                                     (or (seq (set/intersection deleted-ids
+                                                                (entity-refs entity)))
+                                         (and (contains? reconciled-relation-types
+                                                         (:type entity))
+                                              (seq (set/intersection
+                                                    matched-raw-ids
+                                                    (entity-refs entity)))))))
         patched (->> raw
                      (remove #(or (contains? deleted-ids (:id %))
                                   (removed-relationship? %)))
@@ -1022,12 +1169,49 @@
       (into {} (keep (fn [ref] (when-let [u (unit table ref)] [(:type u) u])))
             (list-values (get-in assignment [:args 0]))))))
 
-(defn- property-single-value [entity]
-  (let [nominal (get-in entity [:args 2])]
-    {:name (get-in entity [:args 0]) :description (get-in entity [:args 1])
-     :value (typed-value nominal)
-     :value-type (when (and (vector? nominal) (= :typed (first nominal))) (second nominal))
-     :unit (get-in entity [:args 3])}))
+(defn- typed-value-type [value]
+  (when (and (vector? value) (= :typed (first value))) (second value)))
+
+(defn- property-value [table entity]
+  (let [base {:name (get-in entity [:args 0])
+              :description (get-in entity [:args 1])}]
+    (case (:type entity)
+      :ifcpropertysinglevalue
+      (let [nominal (get-in entity [:args 2])]
+        (assoc base :kind :single :value (typed-value nominal)
+               :value-type (typed-value-type nominal)
+               :unit (unit table (get-in entity [:args 3]))))
+
+      :ifcpropertyenumeratedvalue
+      (let [values (list-values (get-in entity [:args 2]))
+            enumeration (referenced table (get-in entity [:args 3]))
+            allowed (when enumeration (list-values (get-in enumeration [:args 1])))
+            sample (or (first values) (first allowed))]
+        (assoc base :kind :enumerated :values (mapv typed-value values)
+               :value-type (typed-value-type sample)
+               :enumeration
+               (when enumeration
+                 {:name (get-in enumeration [:args 0])
+                  :values (mapv typed-value allowed)
+                  :unit (unit table (get-in enumeration [:args 2]))})))
+
+      :ifcpropertyboundedvalue
+      (let [upper (get-in entity [:args 2]) lower (get-in entity [:args 3])
+            set-point (get-in entity [:args 5])
+            sample (first (remove #(= :$ %) [upper lower set-point]))]
+        (assoc base :kind :bounded
+               :upper (when-not (= :$ upper) (typed-value upper))
+               :lower (when-not (= :$ lower) (typed-value lower))
+               :set-point (when-not (= :$ set-point) (typed-value set-point))
+               :value-type (typed-value-type sample)
+               :unit (unit table (get-in entity [:args 4]))))
+
+      :ifcpropertylistvalue
+      (let [values (list-values (get-in entity [:args 2]))]
+        (assoc base :kind :list :values (mapv typed-value values)
+               :value-type (typed-value-type (first values))
+               :unit (unit table (get-in entity [:args 3]))))
+      nil)))
 
 (defn- property-sets [table entities]
   (let [sets (into {}
@@ -1037,10 +1221,9 @@
                             :name (get-in entity [:args 2])
                             :properties
                             (into {} (keep (fn [ref]
-                                             (let [property (referenced table ref)]
-                                               (when (= :ifcpropertysinglevalue (:type property))
-                                                 (let [p (property-single-value property)]
-                                                   [(:name p) p])))))
+                                             (when-let [p (property-value table
+                                                                          (referenced table ref))]
+                                               [(:name p) p])))
                                   (list-values (get-in entity [:args 4])))}])
                         (filter #(= :ifcpropertyset (:type %)) entities)))]
     (reduce (fn [by-object relation]
@@ -1050,6 +1233,113 @@
                           by-object (list-values (get-in relation [:args 4])))
                   by-object)))
             {} (filter #(= :ifcreldefinesbyproperties (:type %)) entities))))
+
+(def quantity-kinds
+  {:ifcquantitylength :length :ifcquantityarea :area
+   :ifcquantityvolume :volume :ifcquantitycount :count
+   :ifcquantityweight :weight :ifcquantitytime :time
+   :ifcquantitynumber :number})
+
+(defn- quantity [table ref]
+  (let [entity (referenced table ref)]
+    (when-let [kind (get quantity-kinds (:type entity))]
+      {:name (get-in entity [:args 0])
+       :description (get-in entity [:args 1])
+       :kind kind
+       :unit (unit table (get-in entity [:args 2]))
+       :value (get-in entity [:args 3])
+       :formula (get-in entity [:args 4])})))
+
+(defn- quantity-sets [table entities]
+  (let [sets
+        (into {}
+              (map (fn [entity]
+                     [(:id entity)
+                      {:id (:id entity) :global-id (get-in entity [:args 0])
+                       :name (get-in entity [:args 2])
+                       :description (get-in entity [:args 3])
+                       :method-of-measurement (get-in entity [:args 4])
+                       :quantities
+                       (into {}
+                             (keep (fn [ref]
+                                     (when-let [value (quantity table ref)]
+                                       [(:name value) value])))
+                             (list-values (get-in entity [:args 5])))}])
+                   (filter #(= :ifcelementquantity (:type %)) entities)))]
+    (reduce (fn [by-object relation]
+              (let [qset (get sets (ref-id (get-in relation [:args 5])))]
+                (if (and qset (:name qset))
+                  (reduce #(assoc-in %1 [(ref-id %2) (:name qset)] qset)
+                          by-object (list-values (get-in relation [:args 4])))
+                  by-object)))
+            {} (filter #(= :ifcreldefinesbyproperties (:type %)) entities))))
+
+(defn- material-definition [table ref]
+  (when-let [entity (referenced table ref)]
+    (case (:type entity)
+      :ifcmaterial
+      {:kind :material :name (get-in entity [:args 0])
+       :description (get-in entity [:args 1]) :category (get-in entity [:args 2])}
+
+      :ifcmateriallayerset
+      {:kind :layer-set :name (get-in entity [:args 1])
+       :description (get-in entity [:args 2])
+       :layers
+       (mapv (fn [layer-ref]
+               (let [layer (referenced table layer-ref)]
+                 {:material (material-definition table (get-in layer [:args 0]))
+                  :thickness (get-in layer [:args 1])
+                  :ventilated (let [value (get-in layer [:args 2])]
+                                (when-not (= :$ value) value))
+                  :name (get-in layer [:args 3])
+                  :description (get-in layer [:args 4])
+                  :category (get-in layer [:args 5])
+                  :priority (get-in layer [:args 6])}))
+             (list-values (get-in entity [:args 0])))}
+
+      :ifcmateriallayersetusage
+      {:kind :layer-set-usage
+       :layer-set (material-definition table (get-in entity [:args 0]))
+       :direction (get-in entity [:args 1])
+       :direction-sense (get-in entity [:args 2])
+       :offset (get-in entity [:args 3])
+       :reference-extent (get-in entity [:args 4])}
+      nil)))
+
+(defn- materials-by-object [table entities]
+  (reduce (fn [by-object relation]
+            (let [material (material-definition table (get-in relation [:args 5]))]
+              (reduce #(assoc %1 (ref-id %2) material) by-object
+                      (list-values (get-in relation [:args 4])))))
+          {} (filter #(= :ifcrelassociatesmaterial (:type %)) entities)))
+
+(defn- classification-source [table ref]
+  (when-let [entity (referenced table ref)]
+    (when (= :ifcclassification (:type entity))
+      {:source (get-in entity [:args 0]) :edition (get-in entity [:args 1])
+       :edition-date (get-in entity [:args 2]) :name (get-in entity [:args 3])
+       :description (get-in entity [:args 4]) :specification (get-in entity [:args 5])
+       :reference-tokens (when-not (= :$ (get-in entity [:args 6]))
+                           (vec (list-values (get-in entity [:args 6]))))})))
+
+(defn- classification-reference [table ref]
+  (when-let [entity (referenced table ref)]
+    (when (= :ifcclassificationreference (:type entity))
+      {:location (get-in entity [:args 0])
+       :identification (get-in entity [:args 1])
+       :name (get-in entity [:args 2])
+       :source (classification-source table (get-in entity [:args 3]))
+       :description (get-in entity [:args 4])
+       :sort (get-in entity [:args 5])})))
+
+(defn- classifications-by-object [table entities]
+  (reduce (fn [by-object relation]
+            (if-let [classification
+                     (classification-reference table (get-in relation [:args 5]))]
+              (reduce #(update %1 (ref-id %2) (fnil conj []) classification)
+                      by-object (list-values (get-in relation [:args 4])))
+              by-object))
+          {} (filter #(= :ifcrelassociatesclassification (:type %)) entities)))
 
 (defn- opening-relations [entities]
   {:voids (into {} (map (fn [relation]
@@ -1141,6 +1431,9 @@
         contained-by (containment entities)
         project-entity (first (filter #(= :ifcproject (:type %)) entities))
         psets-by-object (property-sets table entities)
+        qsets-by-object (quantity-sets table entities)
+        materials (materials-by-object table entities)
+        classifications (classifications-by-object table entities)
         types-by-object (type-relations table entities)
         {:keys [voids fills]} (opening-relations entities)
         raw-products (into {} (map (fn [entity] [(:id entity) (product table entity)]))
@@ -1152,13 +1445,20 @@
                               (assoc value :container-id (get contained-by id)
                                      :type-object (get types-by-object id)
                                      :property-sets (get psets-by-object id {})
+                                     :quantity-sets (get qsets-by-object id {})
+                                     :material (get materials id)
+                                     :classifications (get classifications id [])
                                      :openings
                                      (mapv (fn [opening-id]
                                              (assoc (get raw-products opening-id)
                                                     :filled-by (get fills opening-id)
                                                     :filled-by-global-id
                                                     (:global-id (get raw-products (get fills opening-id)))
-                                                    :property-sets (get psets-by-object opening-id {})))
+                                                    :property-sets (get psets-by-object opening-id {})
+                                                    :quantity-sets (get qsets-by-object opening-id {})
+                                                    :material (get materials opening-id)
+                                                    :classifications
+                                                    (get classifications opening-id [])))
                                            (get openings-by-host id))))))
         document
         {:ifc/schema (:part21/schema parsed) :ifc/contract-version contract-version

@@ -305,6 +305,106 @@
     (is (= (:placement wall) (:placement reimported-wall))
         "standard rewrite keeps the composed world coordinate system")))
 
+(deftest quantities-material-layers-and-classifications-roundtrip
+  (let [document
+        (ifc/exchange-document
+         {:project {:global-id "classified-project" :name "Classified Project"}
+          :elements
+          [{:id 10 :global-id "classified-wall" :kind :wall :name "Layered Wall"
+            :property-sets
+            {"Pset_Asset"
+             {:properties
+              {"Status" {:kind :enumerated :values ["Existing"]
+                         :value-type :ifclabel
+                         :enumeration {:name "PEnum_ElementStatus"
+                                       :values ["New" "Existing" "Demolish"]}}
+               "OperatingTemperature"
+               {:kind :bounded :lower 18.0 :upper 26.0 :set-point 22.0
+                :value-type :ifcthermodynamictemperaturemeasure
+                :unit {:kind :si :type :thermodynamictemperatureunit
+                       :name :degree-celsius}}
+               "Zones" {:kind :list :values ["North" "Perimeter"]
+                        :value-type :ifclabel}}}}
+            :quantity-sets
+            {"Qto_WallBaseQuantities"
+             {:global-id "wall-quantities" :method-of-measurement "ISO 9836"
+              :quantities
+              {"Length" {:kind :length :value 8.0 :formula "AxisLength"
+                         :unit {:kind :si :type :lengthunit :name :metre}}
+               "GrossSideArea" {:kind :area :value 25.6}
+               "GrossVolume" {:kind :volume :value 5.12}
+               "Count" {:kind :count :value 1.0}}}}
+            :material
+            {:kind :layer-set-usage :direction :axis2 :direction-sense :positive
+             :offset -0.1 :reference-extent 3.2
+             :layer-set
+             {:name "Exterior 200mm" :description "Wall construction"
+              :layers
+              [{:name "Finish" :thickness 0.015
+                :material {:name "Gypsum" :category "Finish"}}
+               {:name "Structure" :thickness 0.17 :priority 50
+                :material {:name "Concrete" :description "C30/37"
+                           :category "Concrete"}}
+               {:name "Exterior finish" :thickness 0.015 :ventilated false
+                :material {:name "Render"}}]}}
+            :classifications
+            [{:identification "Ss_25_10_20" :name "Wall systems"
+              :location "https://uniclass.thenbs.com/taxon/ss_25_10_20"
+              :description "External wall classification" :sort "001"
+              :source {:name "Uniclass 2015" :source "NBS" :edition "2025"
+                       :specification "https://uniclass.thenbs.com"
+                       :reference-tokens ["Ss" "Pr"]}}]}]})
+        text (ifc/write-spf document)
+        imported (ifc/read-document text)
+        wall (first (:ifc/elements imported))
+        report (ifc/roundtrip-report text)
+        vendor-text (string/replace
+                     text "\nENDSEC;\nEND-ISO-10303-21;"
+                     "\n#9999=IFCANNOTATION('vendor-data',$,'Keep Classification Extension',$,$,$,$);\nENDSEC;\nEND-ISO-10303-21;")
+        edited
+        (update (ifc/read-document vendor-text) :ifc/elements
+                (fn [elements]
+                  (mapv #(-> %
+                             (assoc-in [:quantity-sets "Qto_WallBaseQuantities"
+                                        :quantities "Length" :value] 9.5)
+                             (assoc-in [:material :layer-set :layers 1 :thickness] 0.2)
+                             (assoc-in [:classifications 0 :identification]
+                                       "Ss_25_10_30"))
+                        elements)))
+        edited-text (ifc/write-spf edited)
+        edited-wall (first (:ifc/elements (ifc/read-document edited-text)))]
+    (is (string/includes? text "IFCELEMENTQUANTITY"))
+    (is (string/includes? text "IFCMATERIALLAYERSETUSAGE"))
+    (is (string/includes? text "IFCRELASSOCIATESCLASSIFICATION"))
+    (is (string/includes? text "IFCPROPERTYENUMERATEDVALUE"))
+    (is (string/includes? text "IFCPROPERTYBOUNDEDVALUE"))
+    (is (string/includes? text "IFCPROPERTYLISTVALUE"))
+    (is (= ["Existing"]
+           (get-in wall [:property-sets "Pset_Asset" :properties "Status" :values])))
+    (is (= 22.0
+           (get-in wall [:property-sets "Pset_Asset" :properties
+                         "OperatingTemperature" :set-point])))
+    (is (= ["North" "Perimeter"]
+           (get-in wall [:property-sets "Pset_Asset" :properties "Zones" :values])))
+    (is (= 8.0 (get-in wall [:quantity-sets "Qto_WallBaseQuantities"
+                             :quantities "Length" :value])))
+    (is (= :length (get-in wall [:quantity-sets "Qto_WallBaseQuantities"
+                                 :quantities "Length" :kind])))
+    (is (= "Concrete" (get-in wall [:material :layer-set :layers 1
+                                     :material :name])))
+    (is (= 0.2 (reduce + (map :thickness
+                              (get-in wall [:material :layer-set :layers])))))
+    (is (= "Ss_25_10_20" (get-in wall [:classifications 0 :identification])))
+    (is (= "Uniclass 2015" (get-in wall [:classifications 0 :source :name])))
+    (is (:roundtrip/lossless? report)
+        (pr-str {:expected (:roundtrip/expected report)
+                 :actual (:roundtrip/actual report)}))
+    (is (string/includes? edited-text "Keep Classification Extension"))
+    (is (= 9.5 (get-in edited-wall [:quantity-sets "Qto_WallBaseQuantities"
+                                    :quantities "Length" :value])))
+    (is (= 0.2 (get-in edited-wall [:material :layer-set :layers 1 :thickness])))
+    (is (= "Ss_25_10_30" (get-in edited-wall [:classifications 0 :identification])))))
+
 (deftest corpus-report-aggregates-external-roundtrip-evidence
   #?(:clj
      (let [text (slurp (io/file "test/fixtures/revit-wall.ifc"))
