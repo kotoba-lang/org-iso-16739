@@ -814,6 +814,33 @@
     (is (= "Ss_25_10_20" (get-in type-object [:classifications 0 :identification])))
     (is (:roundtrip/lossless? (ifc/roundtrip-report output)))))
 
+(deftest type-representation-maps-preserve-shared-family-geometry
+  (let [document
+        (ifc/exchange-document
+         {:project {:global-id "mapped-type-project" :name "Mapped type"}
+          :elements
+          [{:id 10 :global-id "mapped-door" :kind :door :name "Door"
+            :type-object
+            {:id 20 :global-id "mapped-door-type" :name "900 x 2100"
+             :element-type "Single Flush" :predefined-type :door
+             :representation-maps
+             [{:identifier "Body" :representation-type "SweptSolid"
+               :mapping-origin {:location [0.0 0.0 0.0] :axis [0.0 0.0 1.0]
+                                :ref-direction [1.0 0.0 0.0]}
+               :geometry {:kind :extruded-area-solid
+                          :profile {:kind :rectangle :x-dim 0.9 :y-dim 0.05}
+                          :position {:location [0.0 0.0 0.0]}
+                          :direction [0.0 0.0 1.0] :depth 2.1}}]}}]})
+        output (ifc/rewrite-spf document)
+        imported (ifc/read-document output)
+        representation-map (get-in imported [:ifc/elements 0 :type-object
+                                              :representation-maps 0])]
+    (is (string/includes? output "IFCREPRESENTATIONMAP"))
+    (is (= "SweptSolid" (:representation-type representation-map)))
+    (is (= [0.0 0.0 0.0] (get-in representation-map [:mapping-origin :location])))
+    (is (= 2.1 (get-in representation-map [:geometry :depth])))
+    (is (:roundtrip/lossless? (ifc/roundtrip-report output)))))
+
 (deftest hybrid-export-splices-edited-geometry-without-dropping-unknown-entities
   #?(:clj
      (let [fixture (slurp (io/file "test/fixtures/revit-wall.ifc"))
