@@ -20,7 +20,8 @@
         project (:ifc/project document)
         wall (first (filter #(= 100 (:id %)) (:ifc/elements document)))
         mapped (first (filter #(= 130 (:id %)) (:ifc/elements document)))
-        clipped (first (filter #(= 140 (:id %)) (:ifc/elements document)))]
+        clipped (first (filter #(= 140 (:id %)) (:ifc/elements document)))
+        brep (first (filter #(= 150 (:id %)) (:ifc/elements document)))]
     (is (= :external-spf (:ifc/source document)))
     (is (= [:ifcsite :ifcbuilding :ifcbuildingstorey]
            [(get-in project [:children 0 :type])
@@ -52,4 +53,10 @@
     (is (= :half-space-solid
            (get-in clipped [:geometry :items 0 :second-operand :kind])))
     (is (= [10.0 20.0 1.5]
-           (get-in clipped [:geometry :items 0 :second-operand :base-surface :position :location])))))
+           (get-in clipped [:geometry :items 0 :second-operand :base-surface :position :location])))
+    (is (= :faceted-brep (get-in brep [:geometry :kind])))
+    (is (= 4 (count (get-in brep [:geometry :faces]))))
+    (is (= :outer (get-in brep [:geometry :faces 0 :bounds 0 :kind])))
+    (is (true? (get-in brep [:geometry :faces 0 :bounds 0 :orientation])))
+    (is (= [[0.0 0.0 0.0] [0.0 2.0 0.0] [2.0 0.0 0.0]]
+           (get-in brep [:geometry :faces 0 :bounds 0 :points])))))
