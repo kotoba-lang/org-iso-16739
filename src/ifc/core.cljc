@@ -132,7 +132,7 @@
        :scale2 (let [value (get-in entity [:args 5])] (if (or (nil? value) (= :$ value)) 1.0 value))
        :scale3 (let [value (get-in entity [:args 6])] (if (or (nil? value) (= :$ value)) 1.0 value))})))
 
-(declare geometry-item)
+(declare geometry-item geometry-items)
 (defn- mapped-geometry [table item]
   (let [source (referenced table (get-in item [:args 0]))
         source-items (when (= :ifcrepresentationmap (:type source))
@@ -140,7 +140,18 @@
     {:kind :mapped-item
      :mapping-origin (axis-placement table (get-in source [:args 0]))
      :transform (transformation table (get-in item [:args 1]))
-     :source (some #(geometry-item table %) source-items)}))
+     :source (geometry-items table source-items)}))
+
+(defn- half-space [table item]
+  (let [surface (referenced table (get-in item [:args 0]))]
+    {:kind :half-space-solid
+     :agreement-flag (get-in item [:args 1])
+     :base-surface (when (= :ifcplane (:type surface))
+                     {:kind :plane :position (axis-placement table (get-in surface [:args 0]))})
+     :boundary (when (= :ifcpolygonalboundedhalfspace (:type item))
+                 (polyline table (get-in item [:args 3])))
+     :position (when (= :ifcpolygonalboundedhalfspace (:type item))
+                 (axis-placement table (get-in item [:args 2])))}))
 
 (defn- geometry-item [table item-ref]
   (let [item (referenced table item-ref)]
@@ -152,10 +163,22 @@
        :direction (direction table (get-in item [:args 2]))
        :depth (get-in item [:args 3])}
       :ifcmappeditem (mapped-geometry table item)
+      (:ifcbooleanclippingresult :ifcbooleanresult)
+      {:kind :boolean-result :operator (get-in item [:args 0])
+       :first-operand (geometry-item table (get-in item [:args 1]))
+       :second-operand (geometry-item table (get-in item [:args 2]))}
+      (:ifchalfspacesolid :ifcpolygonalboundedhalfspace) (half-space table item)
       nil)))
 
+(defn- geometry-items [table item-refs]
+  (let [items (vec (keep #(geometry-item table %) item-refs))]
+    (case (count items)
+      0 nil
+      1 (first items)
+      {:kind :collection :items items})))
+
 (defn product-geometry [table representation-ref]
-  (some #(geometry-item table %) (representation-items table representation-ref)))
+  (geometry-items table (representation-items table representation-ref)))
 
 (def product-types (set (vals entity-types)))
 
