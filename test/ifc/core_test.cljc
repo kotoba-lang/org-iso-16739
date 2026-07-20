@@ -278,6 +278,72 @@
                     :actual (:roundtrip/actual report)})))
      :cljs (is true)))
 
+(deftest advanced-swept-solids-and-segmented-curves-round-trip
+  (let [profile {:kind :rectangle :name "Sweep Profile" :x-dim 0.4 :y-dim 0.2}
+        indexed {:kind :indexed-polycurve
+                 :points [[0 0 0] [2 0 0] [3 1 0] [4 0 0]]
+                 :segments [{:kind :line :indices [1 2]}
+                            {:kind :arc :indices [2 3 4]}]
+                 :self-intersect false}
+        composite {:kind :composite-curve :self-intersect false
+                   :segments [{:transition :continuous :same-sense true
+                               :parent-curve {:kind :polyline
+                                              :points [[0 0 0] [2 0 0]]}}
+                              {:transition :continuous :same-sense true
+                               :parent-curve {:kind :circle
+                                              :position {:location [2 1 0]}
+                                              :radius 1.0}}]}
+        document (ifc/exchange-document
+                  {:project {:global-id "advanced-sweeps" :name "Advanced Sweeps"}
+                   :elements
+                   [{:id 1 :global-id "revolved" :kind :proxy :name "Revolved"
+                     :geometry {:kind :revolved-area-solid :profile profile
+                                :position {:location [0 0 0]}
+                                :axis {:location [2 0 0] :axis [0 1 0]}
+                                :angle 3.141592653589793}}
+                    {:id 2 :global-id "fixed-sweep" :kind :proxy :name "Fixed Sweep"
+                     :geometry {:kind :fixed-reference-swept-area-solid :profile profile
+                                :position {:location [0 0 0]} :directrix indexed
+                                :fixed-reference [0 0 1]}}
+                    {:id 3 :global-id "surface-sweep" :kind :proxy :name "Surface Sweep"
+                     :geometry {:kind :surface-curve-swept-area-solid :profile profile
+                                :position {:location [0 0 0]} :directrix composite
+                                :reference-surface {:kind :plane
+                                                    :position {:location [0 0 0]}}}}]})
+        text (ifc/write-spf document)
+        imported (ifc/read-document text)
+        by-name (into {} (map (juxt :name :geometry) (:ifc/elements imported)))]
+    (is (string/includes? text "IFCREVOLVEDAREASOLID"))
+    (is (string/includes? text "IFCFIXEDREFERENCESWEPTAREASOLID"))
+    (is (string/includes? text "IFCSURFACECURVESWEPTAREASOLID"))
+    (is (string/includes? text "IFCINDEXEDPOLYCURVE"))
+    (is (string/includes? text "IFCARCINDEX"))
+    (is (string/includes? text "IFCCOMPOSITECURVE"))
+    (is (= :revolved-area-solid (get-in by-name ["Revolved" :kind])))
+    (is (= {:kind :arc :indices [2 3 4]}
+           (get-in by-name ["Fixed Sweep" :directrix :segments 1])))
+    (is (= :circle
+           (get-in by-name ["Surface Sweep" :directrix :segments 1
+                            :parent-curve :kind])))
+    (is (= :plane (get-in by-name ["Surface Sweep" :reference-surface :kind])))))
+
+(deftest external-advanced-sweeps-fixture-is-semantically-lossless
+  #?(:clj
+     (let [text (slurp (io/file "test/fixtures/advanced-sweeps.ifc"))
+           report (ifc/roundtrip-report text)
+           rewritten (:roundtrip/output report)]
+       (is (= 3 (:roundtrip/input-elements report)))
+       (is (= 3 (:roundtrip/output-elements report)))
+       (is (string/includes? rewritten "IFCREVOLVEDAREASOLID"))
+       (is (string/includes? rewritten "IFCFIXEDREFERENCESWEPTAREASOLID"))
+       (is (string/includes? rewritten "IFCSURFACECURVESWEPTAREASOLID"))
+       (is (string/includes? rewritten "IFCINDEXEDPOLYCURVE"))
+       (is (string/includes? rewritten "IFCCOMPOSITECURVE"))
+       (is (:roundtrip/lossless? report)
+           (pr-str {:expected (:roundtrip/expected report)
+                    :actual (:roundtrip/actual report)})))
+     :cljs (is true)))
+
 (deftest nested-local-placement-composes-parent-orientation
   (let [text (str "ISO-10303-21;\nHEADER;\n"
                   "FILE_DESCRIPTION(('ViewDefinition [DesignTransferView]'),'2;1');\n"

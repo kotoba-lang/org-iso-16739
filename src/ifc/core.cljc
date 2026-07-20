@@ -51,10 +51,42 @@
                        (point! (or (:location placement) [0.0 0.0 0.0]))
                        (direction! (or (:axis placement) [0.0 0.0 1.0]))
                        (direction! (or (:ref-direction placement) [1.0 0.0 0.0]))))
+        axis1! (fn [placement]
+                 (emit! :ifcaxis1placement
+                        (point! (or (:location placement) [0.0 0.0 0.0]))
+                        (direction! (or (:axis placement) [0.0 0.0 1.0]))))
         local! (fn [placement] (emit! :ifclocalplacement :$ (axis! placement)))
-        curve! (fn [curve]
+        curve! (fn curve! [curve]
                  (case (:kind curve)
                    :polyline (emit! :ifcpolyline (list* (mapv point! (:points curve))))
+                   :indexed-polycurve
+                   (let [coordinates (:points curve)
+                         dimension (count (first coordinates))
+                         point-list (emit! (if (= 2 dimension)
+                                             :ifccartesianpointlist2d
+                                             :ifccartesianpointlist3d)
+                                           (list* (mapv list* coordinates)))
+                         segments
+                         (if (seq (:segments curve))
+                           (list* (mapv (fn [{:keys [kind indices]}]
+                                         [:typed (if (= :arc kind)
+                                                   :ifcarcindex :ifclineindex)
+                                          (list* indices)])
+                                       (:segments curve)))
+                           :$)]
+                     (emit! :ifcindexedpolycurve point-list segments
+                            (if (nil? (:self-intersect curve)) :$
+                                (logical (:self-intersect curve)))))
+                   :composite-curve
+                   (let [segments
+                         (mapv (fn [segment]
+                                 (emit! :ifccompositecurvesegment
+                                        (or (:transition segment) :continuous)
+                                        (logical-true (:same-sense segment))
+                                        (curve! (:parent-curve segment))))
+                               (:segments curve))]
+                     (emit! :ifccompositecurve (list* segments)
+                            (logical (:self-intersect curve))))
                    :line (let [orientation (emit! :ifcvector
                                                    (direction! (:direction curve))
                                                    (or (:magnitude curve) 1.0))]
@@ -77,6 +109,26 @@
                            (apply emit! :ifcbsplinecurvewithknots knot-args)))
                        (apply emit! :ifcbsplinecurve args)))
                    nil))
+        profile! (fn [profile]
+                   (case (:kind profile)
+                     :rectangle (emit! :ifcrectangleprofiledef :area
+                                       (or (:name profile) "Profile") :$
+                                       (:x-dim profile) (:y-dim profile))
+                     :circle (emit! :ifccircleprofiledef :area
+                                    (or (:name profile) "Profile") :$
+                                    (:radius profile))
+                     :i-shape (emit! :ifcishapeprofiledef :area
+                                     (or (:name profile) "Profile") :$
+                                     (:overall-width profile) (:overall-depth profile)
+                                     (:web-thickness profile) (:flange-thickness profile)
+                                     (or (:fillet-radius profile) :$)
+                                     (or (:flange-edge-radius profile) :$)
+                                     (or (:flange-slope profile) :$))
+                     :arbitrary-closed
+                     (emit! :ifcarbitraryclosedprofiledef :area
+                            (or (:name profile) "Profile")
+                            (curve! {:kind :polyline :points (:points profile)}))
+                     nil))
         loop! (fn [bound]
                 (if (seq (:edges bound))
                   (let [edges
@@ -124,29 +176,33 @@
         geometry! (fn geometry! [geometry]
                     (case (:kind geometry)
                       :extruded-area-solid
-                      (let [profile (:profile geometry)
-                            profile-ref
-                            (case (:kind profile)
-                              :rectangle (emit! :ifcrectangleprofiledef :area (or (:name profile) "Profile")
-                                                :$ (:x-dim profile) (:y-dim profile))
-                              :circle (emit! :ifccircleprofiledef :area (or (:name profile) "Profile")
-                                             :$ (:radius profile))
-                              :i-shape (emit! :ifcishapeprofiledef :area (or (:name profile) "Profile") :$
-                                              (:overall-width profile) (:overall-depth profile)
-                                              (:web-thickness profile) (:flange-thickness profile)
-                                              (or (:fillet-radius profile) :$)
-                                              (or (:flange-edge-radius profile) :$)
-                                              (or (:flange-slope profile) :$))
-                              :arbitrary-closed
-                              (let [points (mapv point! (:points profile))
-                                    curve (emit! :ifcpolyline (list* points))]
-                                (emit! :ifcarbitraryclosedprofiledef :area
-                                       (or (:name profile) "Profile") curve))
-                              nil)]
+                      (let [profile-ref (profile! (:profile geometry))]
                         (when profile-ref
                           (emit! :ifcextrudedareasolid profile-ref (axis! (:position geometry))
                                  (direction! (or (:direction geometry) [0.0 0.0 1.0]))
                                  (:depth geometry))))
+                      :revolved-area-solid
+                      (emit! :ifcrevolvedareasolid
+                             (profile! (:profile geometry))
+                             (axis! (:position geometry))
+                             (axis1! (:axis geometry))
+                             (:angle geometry))
+                      :fixed-reference-swept-area-solid
+                      (emit! :ifcfixedreferencesweptareasolid
+                             (profile! (:profile geometry))
+                             (axis! (:position geometry))
+                             (curve! (:directrix geometry))
+                             (or (:start-param geometry) :$)
+                             (or (:end-param geometry) :$)
+                             (direction! (:fixed-reference geometry)))
+                      :surface-curve-swept-area-solid
+                      (emit! :ifcsurfacecurvesweptareasolid
+                             (profile! (:profile geometry))
+                             (axis! (:position geometry))
+                             (curve! (:directrix geometry))
+                             (or (:start-param geometry) :$)
+                             (or (:end-param geometry) :$)
+                             (surface! (:reference-surface geometry)))
                       :swept-disk-solid
                       (let [directrix (emit! :ifcpolyline
                                              (list* (mapv point! (:directrix geometry))))]
@@ -745,6 +801,12 @@
        :ref-direction (or (direction table (get-in entity [:args 1])) [1.0 0.0])}
       nil)))
 
+(defn- axis1-placement [table ref]
+  (when-let [entity (referenced table ref)]
+    (when (= :ifcaxis1placement (:type entity))
+      {:location (or (coordinates table (get-in entity [:args 0])) [0.0 0.0 0.0])
+       :axis (or (direction table (get-in entity [:args 1])) [0.0 0.0 1.0])})))
+
 (defn- vector3 [values]
   (vec (take 3 (concat values (repeat 0.0)))))
 
@@ -874,12 +936,38 @@
     (when (= :ifcvertexpoint (:type entity))
       (coordinates table (get-in entity [:args 0])))))
 
+(declare curve point-list)
+
+(defn- indexed-segment [value]
+  (when (and (vector? value) (= :typed (first value)))
+    {:kind (if (= :ifcarcindex (second value)) :arc :line)
+     :indices (mapv long (list-values (nth value 2)))}))
+
+(defn- composite-segment [table ref]
+  (when-let [entity (referenced table ref)]
+    (when (= :ifccompositecurvesegment (:type entity))
+      {:transition (get-in entity [:args 0])
+       :same-sense (get-in entity [:args 1])
+       :parent-curve (curve table (get-in entity [:args 2]))})))
+
 (defn- curve [table ref]
   (let [entity (referenced table ref)]
     (case (:type entity)
       :ifcpolyline {:kind :polyline
                     :points (mapv #(coordinates table %)
                                   (list-values (get-in entity [:args 0])))}
+      :ifcindexedpolycurve
+      {:kind :indexed-polycurve
+       :points (point-list table (get-in entity [:args 0]))
+       :segments (when-not (= :$ (get-in entity [:args 1]))
+                   (vec (keep indexed-segment
+                              (list-values (get-in entity [:args 1])))))
+       :self-intersect (get-in entity [:args 2])}
+      :ifccompositecurve
+      {:kind :composite-curve
+       :segments (vec (keep #(composite-segment table %)
+                            (list-values (get-in entity [:args 0]))))
+       :self-intersect (get-in entity [:args 1])}
       :ifcline (let [vector-entity (referenced table (get-in entity [:args 1]))]
                  {:kind :line :origin (coordinates table (get-in entity [:args 0]))
                   :direction (direction table (get-in vector-entity [:args 0]))
@@ -1113,6 +1201,26 @@
        :position (axis-placement table (get-in item [:args 1]))
        :direction (direction table (get-in item [:args 2]))
        :depth (get-in item [:args 3])}
+      :ifcrevolvedareasolid
+      {:kind :revolved-area-solid
+       :profile (profile table (get-in item [:args 0]))
+       :position (axis-placement table (get-in item [:args 1]))
+       :axis (axis1-placement table (get-in item [:args 2]))
+       :angle (get-in item [:args 3])}
+      :ifcfixedreferencesweptareasolid
+      {:kind :fixed-reference-swept-area-solid
+       :profile (profile table (get-in item [:args 0]))
+       :position (axis-placement table (get-in item [:args 1]))
+       :directrix (curve table (get-in item [:args 2]))
+       :start-param (get-in item [:args 3]) :end-param (get-in item [:args 4])
+       :fixed-reference (direction table (get-in item [:args 5]))}
+      :ifcsurfacecurvesweptareasolid
+      {:kind :surface-curve-swept-area-solid
+       :profile (profile table (get-in item [:args 0]))
+       :position (axis-placement table (get-in item [:args 1]))
+       :directrix (curve table (get-in item [:args 2]))
+       :start-param (get-in item [:args 3]) :end-param (get-in item [:args 4])
+       :reference-surface (surface table (get-in item [:args 5]))}
       :ifcsweptdisksolid
       {:kind :swept-disk-solid
        :directrix (polyline table (get-in item [:args 0]))
