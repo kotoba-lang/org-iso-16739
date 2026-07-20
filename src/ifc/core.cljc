@@ -46,6 +46,27 @@
                                     (:radius surface))
                      :torus (emit! :ifctoroidalsurface (axis! (:position surface))
                                    (:major-radius surface) (:minor-radius surface))
+                     :b-spline-surface
+                     (let [points (list* (mapv (fn [row] (list* (mapv point! row)))
+                                                (:control-points surface)))]
+                       (if (seq (:u-knots surface))
+                         (let [args [(:u-degree surface) (:v-degree surface) points
+                                     (or (:surface-form surface) :unspecified)
+                                     (boolean (:u-closed surface)) (boolean (:v-closed surface))
+                                     (boolean (:self-intersect surface))
+                                     (list* (:u-multiplicities surface))
+                                     (list* (:v-multiplicities surface))
+                                     (list* (:u-knots surface)) (list* (:v-knots surface))
+                                     (or (:knot-spec surface) :unspecified)]]
+                           (if (seq (:weights surface))
+                             (apply emit! :ifcrationalbsplinesurfacewithknots
+                                    (conj args (list* (mapv list* (:weights surface)))))
+                             (apply emit! :ifcbsplinesurfacewithknots args)))
+                         (emit! :ifcbsplinesurface
+                                (:u-degree surface) (:v-degree surface) points
+                                (or (:surface-form surface) :unspecified)
+                                (boolean (:u-closed surface)) (boolean (:v-closed surface))
+                                (boolean (:self-intersect surface)))))
                      nil))
         geometry! (fn geometry! [geometry]
                     (case (:kind geometry)
@@ -415,6 +436,20 @@
                   :radius (get-in entity [:args 1])}
       :ifcellipse {:kind :ellipse :position (axis-placement table (get-in entity [:args 0]))
                    :semi-axis1 (get-in entity [:args 1]) :semi-axis2 (get-in entity [:args 2])}
+      (:ifcbsplinecurve :ifcbsplinecurvewithknots :ifcrationalbsplinecurvewithknots)
+      (cond-> {:kind :b-spline-curve
+               :degree (get-in entity [:args 0])
+               :control-points (mapv #(coordinates table %)
+                                     (list-values (get-in entity [:args 1])))
+               :curve-form (get-in entity [:args 2])
+               :closed (get-in entity [:args 3])
+               :self-intersect (get-in entity [:args 4])}
+        (not= :ifcbsplinecurve (:type entity))
+        (assoc :multiplicities (mapv long (list-values (get-in entity [:args 5])))
+               :knots (vec (list-values (get-in entity [:args 6])))
+               :knot-spec (get-in entity [:args 7]))
+        (= :ifcrationalbsplinecurvewithknots (:type entity))
+        (assoc :weights (vec (list-values (get-in entity [:args 8])))))
       nil)))
 
 (defn- oriented-edge [table ref]
@@ -516,6 +551,25 @@
       :ifctoroidalsurface
       {:kind :torus :position (axis-placement table (get-in entity [:args 0]))
        :major-radius (get-in entity [:args 1]) :minor-radius (get-in entity [:args 2])}
+      (:ifcbsplinesurface :ifcbsplinesurfacewithknots :ifcrationalbsplinesurfacewithknots)
+      (cond-> {:kind :b-spline-surface
+               :u-degree (get-in entity [:args 0]) :v-degree (get-in entity [:args 1])
+               :control-points
+               (mapv (fn [row]
+                       (mapv #(coordinates table %) (list-values row)))
+                     (list-values (get-in entity [:args 2])))
+               :surface-form (get-in entity [:args 3])
+               :u-closed (get-in entity [:args 4]) :v-closed (get-in entity [:args 5])
+               :self-intersect (get-in entity [:args 6])}
+        (not= :ifcbsplinesurface (:type entity))
+        (assoc :u-multiplicities (mapv long (list-values (get-in entity [:args 7])))
+               :v-multiplicities (mapv long (list-values (get-in entity [:args 8])))
+               :u-knots (vec (list-values (get-in entity [:args 9])))
+               :v-knots (vec (list-values (get-in entity [:args 10])))
+               :knot-spec (get-in entity [:args 11]))
+        (= :ifcrationalbsplinesurfacewithknots (:type entity))
+        (assoc :weights (mapv (comp vec list-values)
+                              (list-values (get-in entity [:args 12])))))
       nil)))
 
 (defn- advanced-brep [table item]
