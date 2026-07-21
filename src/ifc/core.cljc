@@ -35,7 +35,8 @@
    :ifcmemberstandardcase :member
    :ifcplatestandardcase :plate
    :ifcdoorstandardcase :door
-   :ifcwindowstandardcase :window})
+   :ifcwindowstandardcase :window
+   :ifcflowsegment :mep-segment})
 
 (def entity-kind-by-type
   (merge (into {} (map (fn [[kind type]] [type kind])) entity-types)
@@ -106,7 +107,7 @@
 
                   (throw (ex-info "unsupported IFC unit" {:unit unit}))))
         list* (fn [values] (into [:list] values))
-        logical (fn [value] (if (#{:$ :*} value) value (boolean value)))
+        logical (fn [value] (if (#{:$ :* :u :unknown} value) value (boolean value)))
         logical-true (fn [value] (if (nil? value) true (logical value)))
         point! (fn [coordinates] (emit! :ifccartesianpoint (list* coordinates)))
         direction! (fn [ratios] (emit! :ifcdirection (list* ratios)))
@@ -217,12 +218,18 @@
                 (if (seq (:edges bound))
                   (let [edges
                         (mapv (fn [edge]
-                                (let [start (emit! :ifcvertexpoint (point! (:start edge)))
-                                      end (emit! :ifcvertexpoint (point! (:end edge)))
+                                (let [orientation (if (nil? (:orientation edge))
+                                                    true (:orientation edge))
+                                      [edge-start edge-end] (if (false? orientation)
+                                                              [(:end edge) (:start edge)]
+                                                              [(:start edge) (:end edge)])
+                                      start (emit! :ifcvertexpoint (point! edge-start))
+                                      end (emit! :ifcvertexpoint (point! edge-end))
                                       edge-curve (emit! :ifcedgecurve start end
                                                         (curve! (:curve edge))
                                                         (logical-true (:same-sense edge)))]
-                                  (emit! :ifcorientededge :$ :$ edge-curve true)))
+                                  (emit! :ifcorientededge :$ :$ edge-curve
+                                         (logical orientation))))
                               (:edges bound))]
                     (emit! :ifcedgeloop (list* edges)))
                   (emit! :ifcpolyloop (list* (mapv point! (:points bound))))))
@@ -686,9 +693,12 @@
         project-ref (emit! :ifcproject (or (:global-id project) "KOTOBA_PROJECT") :$
                            (or (:name project) "Project") :$ :$ :$ (list* [context]) :$ units)
         spatial-roots (or (seq (:children project))
-                          [{:id :site :type :ifcsite :name "Site" :children
-                            [{:id :building :type :ifcbuilding :name "Building" :children
-                              [{:id :storey :type :ifcbuildingstorey :name "Storey" :children []}]}]}])
+                          (when-not (= :external-spf (:ifc/source document))
+                            [{:id :site :type :ifcsite :name "Site" :children
+                              [{:id :building :type :ifcbuilding :name "Building" :children
+                                [{:id :storey :type :ifcbuildingstorey :name "Storey"
+                                  :children []}]}]}])
+                          [])
         spatial-refs (mapv spatial! spatial-roots)
         _project-spatial (emit! :ifcrelaggregates "KOTOBA_REL_PROJECT_SPATIAL" :$ :$ :$
                                 project-ref (list* spatial-refs))
@@ -2043,8 +2053,18 @@
             (or (nil? (:ref-direction node))
                 (= (if (= 2 (count (:location node))) [1.0 0.0] [1.0 0.0 0.0])
                    (:ref-direction node)))) nil
+       (and (map? node) (contains? #{:single :enumerated :bounded :list} (:kind node))
+            (nil? (:value-type node)))
+       (let [sample (or (:value node) (first (:values node)) (:lower node)
+                        (:upper node) (:set-point node))]
+         (assoc node :value-type
+                (cond (boolean? sample) :ifcboolean
+                      (integer? sample) :ifcinteger
+                      (number? sample) :ifcreal
+                      :else :ifclabel)))
        (map? node) (dissoc node :id :container-id :filled-by)
        (= :$ node) nil
+       (= :notdefined node) nil
        :else node))
    value))
 
@@ -2059,7 +2079,7 @@
                          (portable-semantic-value
                           (-> element
                               (update :property-sets #(or % {}))
-                              (update :openings #(or % []))
+                              (update :openings #(vec (sort-by :global-id (or % []))))
                               (assoc :container-global-id
                                      (get containers (:container-id element))))))
                        (:ifc/elements document))]
