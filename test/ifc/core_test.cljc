@@ -1061,3 +1061,14 @@
     (is (= 2 (count (get-in geometry-import [:ifc/elements 0 :geometry :source :items]))))
     (is (:roundtrip/lossless? (ifc/roundtrip-report legacy-output)))
     (is (:roundtrip/lossless? (ifc/roundtrip-report geometry-output)))))
+
+(deftest generated-spf-uses-schema-correct-derived-integer-and-root-values
+  (let [output (ifc/write-spf
+                (ifc/exchange-document
+                 {:project {:global-id "1hqIFTRjfV6AWq_bMtnZwI" :name "Valid"}
+                  :elements []}))]
+    (is (string/includes? output "IFCSIUNIT(*, .LENGTHUNIT."))
+    (is (string/includes? output
+                          "IFCGEOMETRICREPRESENTATIONCONTEXT($, 'Model', 3,"))
+    (is (not (string/includes? output "'KOTOBA_REL_PROJECT_SPATIAL'")))
+    (is (re-find #"IFCRELAGGREGATES\('[0-3][0-9A-Za-z_$]{21}'" output))))
