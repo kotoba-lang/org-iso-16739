@@ -99,6 +99,9 @@ validates it together with the pinned official fixtures using IfcOpenShell
 isolated `uv` environment and exits non-zero for any schema error. It also
 validates name-edited baseline/candidate pairs for every pinned remote corpus
 file and rejects any newly introduced violation while tolerating only the
-baseline file's pre-existing error multiset. This gate is
+baseline file's pre-existing error multiset. A buildingSMART wall/opening/window
+fixture also undergoes a real solid-depth edit; its regenerated placement,
+representation, property, material, and inverse graph must remain schema-valid.
+This gate is
 separate from IDS: schema conformance is checked first, then project-specific
 information requirements are evaluated by IDS.
