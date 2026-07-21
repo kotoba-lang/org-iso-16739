@@ -72,6 +72,17 @@ clojure -M:ids-corpus -- /path/to/IDS/Documentation/ImplementersDocumentation/Te
 The command fails if the corpus does not contain exactly 287 paired cases or
 if any expected pass/fail result differs.
 
+## Model-view declarations
+
+`ifc.mvd` owns schema-compatible declarations for IFC2X3 Coordination View
+2.0, IFC4/IFC4.3 Reference View and Design Transfer View, and IFC4.3
+Alignment-based Reference View. Imported Part 21 header metadata is retained in
+`:ifc/header`; the detected profile is exposed as `:ifc/model-view`. Exporters
+reject a profile/schema mismatch instead of writing a misleading declaration.
+`validate-declaration` deliberately reports its scope as
+`:declaration-and-schema`; formal entity and WHERE-rule validation remains the
+responsibility of the independent external validator gate.
+
 ## External schema validation
 
 `clojure -M:external-validator` generates a representative IFC4.3 exchange and
