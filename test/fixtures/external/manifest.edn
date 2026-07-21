@@ -71,4 +71,44 @@
    :source/commit "9fc2267d7f1ff35284c5b0fc28cc97bff7ace8e7"
    :source/path "mapped_shape_transformation.ifc"
    :sha256 "002a93f26c360c39f251778bab2728f96152c58dd773efb8ffea0881a201b265"
-   :expected/schema "IFC4" :expected/products 1}]}
+   :expected/schema "IFC4" :expected/products 1}
+  {:name "IfcOpenShell Advanced BRep IFC4" :source/raw-base "https://raw.githubusercontent.com/IfcOpenShell/files/"
+   :source/commit "9fc2267d7f1ff35284c5b0fc28cc97bff7ace8e7" :source/path "advanced_brep.ifc"
+   :sha256 "cbb92a7d952c2acf6d614f4634652446c70934d3c90277d8c76e8dd6e930a861"
+   :expected/schema "IFC4" :expected/products 1}
+  {:name "IfcOpenShell Basic BRep IFC4" :source/raw-base "https://raw.githubusercontent.com/IfcOpenShell/files/"
+   :source/commit "9fc2267d7f1ff35284c5b0fc28cc97bff7ace8e7" :source/path "basic_shape_Brep.ifc"
+   :sha256 "2871f75b4150c5565d0ab575c1a590a9651188102e1e5b498b72721aab09c7b4"
+   :expected/schema "IFC4" :expected/products 1}
+  {:name "IfcOpenShell Basic CSG IFC4" :source/raw-base "https://raw.githubusercontent.com/IfcOpenShell/files/"
+   :source/commit "9fc2267d7f1ff35284c5b0fc28cc97bff7ace8e7" :source/path "basic_shape_CSG.ifc"
+   :sha256 "2d6b42db31b6bb5c7ba143525f2b0d8ca4ca96ba6c2b29be6e77be95455fb26d"
+   :expected/schema "IFC4" :expected/products 1}
+  {:name "IfcOpenShell Surface Model IFC4" :source/raw-base "https://raw.githubusercontent.com/IfcOpenShell/files/"
+   :source/commit "9fc2267d7f1ff35284c5b0fc28cc97bff7ace8e7" :source/path "basic_shape_SurfaceModel.ifc"
+   :sha256 "cfa03f207be4e0de72767c4c861195a2e34cf0cd2f934d24faebe48c80e16ead"
+   :expected/schema "IFC4" :expected/products 1}
+  {:name "IfcOpenShell Swept Solid IFC4" :source/raw-base "https://raw.githubusercontent.com/IfcOpenShell/files/"
+   :source/commit "9fc2267d7f1ff35284c5b0fc28cc97bff7ace8e7" :source/path "basic_shape_SweptSolid.ifc"
+   :sha256 "e1da372ab9de82c407b32f6c3cd6c992a2762e5f3039d308299dbccd58937a8b"
+   :expected/schema "IFC4" :expected/products 1}
+  {:name "IfcOpenShell Tessellation IFC4" :source/raw-base "https://raw.githubusercontent.com/IfcOpenShell/files/"
+   :source/commit "9fc2267d7f1ff35284c5b0fc28cc97bff7ace8e7" :source/path "basic_shape_Tessellation.ifc"
+   :sha256 "21d24529ae31a197e42ab13b8d367f2c845e1ca9f539d05d7022181812f76a9f"
+   :expected/schema "IFC4" :expected/products 1}
+  {:name "IfcOpenShell Faceted BRep IFC2x3" :source/raw-base "https://raw.githubusercontent.com/IfcOpenShell/files/"
+   :source/commit "9fc2267d7f1ff35284c5b0fc28cc97bff7ace8e7" :source/path "faceted_brep.ifc"
+   :sha256 "956cf7338f65a352c584678a8c800637be7e9265923403799793e4156444fed7"
+   :expected/schema "IFC2X3" :expected/products 1}
+  {:name "IfcOpenShell Faceted BRep CSG IFC2x3" :source/raw-base "https://raw.githubusercontent.com/IfcOpenShell/files/"
+   :source/commit "9fc2267d7f1ff35284c5b0fc28cc97bff7ace8e7" :source/path "faceted_brep_csg.ifc"
+   :sha256 "64a86e3637cf92960329ac268812c839958a9da620d1a3d1f2fb49a95b4dc08f"
+   :expected/schema "IFC2X3" :expected/products 1}
+  {:name "IfcOpenShell Nested Mapped Items IFC2x3" :source/raw-base "https://raw.githubusercontent.com/IfcOpenShell/files/"
+   :source/commit "9fc2267d7f1ff35284c5b0fc28cc97bff7ace8e7" :source/path "nested_mapped_item.ifc"
+   :sha256 "68437da43935b310f8cdfc1a7e5b99ce0750c08e93c68128aa53d402c79a4edf"
+   :expected/schema "IFC2X3" :expected/products 53}
+  {:name "IfcOpenShell Mapped Item Style IFC2x3" :source/raw-base "https://raw.githubusercontent.com/IfcOpenShell/files/"
+   :source/commit "9fc2267d7f1ff35284c5b0fc28cc97bff7ace8e7" :source/path "mapped_item_style.ifc"
+   :sha256 "cb0eb3592794414c47a43c2f8f3d46f3ec069bedbb503d3c80f219ebce58b6cf"
+   :expected/schema "IFC2X3" :expected/products 1}]}
