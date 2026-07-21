@@ -120,7 +120,8 @@
 
 (def ^:private generated-id-prefixes
   ["REL_" "KOTOBA_" "SITE_" "BUILDING_" "STOREY_" "SPACE_"
-   "PSET_" "QSET_" "TYPE_" "OPENING_" "PORT_" "ZONE_" "SYSTEM_"])
+   "PSET_" "QSET_" "TYPE_" "OPENING_" "PORT_" "ZONE_" "SYSTEM_"
+   "STRUCTURAL_" "LOAD_"])
 
 (defn- generated-id-placeholder? [value]
   (and (string? value)
@@ -133,12 +134,22 @@
           :ifcreldefinesbyproperties :ifcrelassociatesmaterial
           :ifcrelassociatesclassification :ifcreldefinesbytype
           :ifcrelvoidselement :ifcrelfillselement :ifcrelnests
-          :ifcrelassignstogroup :ifcrelconnectsports}
-        (concat (vals entity-types) (vals type-entity-types) group-types)))
+          :ifcrelassignstogroup :ifcrelconnectsports
+          :ifcrelconnectsstructuralactivity :ifcrelassignstogroupbyfactor}
+        (concat (vals entity-types) (vals type-entity-types) group-types
+                [:ifcstructuralanalysismodel :ifcstructuralpointconnection
+                 :ifcstructuralcurvemember :ifcstructuralpointaction
+                 :ifcstructuralcurveaction :ifcstructuralloadcase
+                 :ifcstructuralloadgroup :ifcstructuralresultgroup
+                 :ifcrelconnectsstructuralmember])))
 
-(defn exchange-document [{:keys [project elements]}]
-  {:ifc/schema schema :ifc/contract-version contract-version
-   :ifc/project project :ifc/elements (vec elements)})
+(defn exchange-document [{:keys [project elements structural-analysis]
+                          :as source}]
+  (cond-> {:ifc/schema schema :ifc/contract-version contract-version
+           :ifc/project project :ifc/elements (vec elements)}
+    (some? structural-analysis)
+    (assoc :ifc/structural-analysis structural-analysis)
+    (:model-view source) (assoc :ifc/model-view (:model-view source))))
 
 (defn- standard-entities [document]
   (let [next-id (atom 0) entities (atom [])
@@ -924,6 +935,169 @@
                      (or (:global-id connection) (str "REL_CONNECT_" (:id connection)))
                      :$ (:name connection) (or (:description connection) :$)
                      relating related realizing))))
+        structural (:ifc/structural-analysis document)
+        structural-load-ref!
+        (fn [load]
+          (if (or (some? (:member load))
+                  (some #(contains? load %) [:qx :qy :qz :qmx :qmy :qmz]))
+            (emit! :ifcstructuralloadlinearforce
+                   (or (:name load) :$)
+                   (or (:qx load) (:fx load) :$)
+                   (or (:qy load) (:fy load) :$)
+                   (or (:qz load) (:fz load) :$)
+                   (or (:qmx load) (:mx load) :$)
+                   (or (:qmy load) (:my load) :$)
+                   (or (:qmz load) (:mz load) :$))
+            (emit! :ifcstructuralloadsingleforce
+                   (or (:name load) :$)
+                   (or (:fx load) :$) (or (:fy load) :$) (or (:fz load) :$)
+                   (or (:mx load) :$) (or (:my load) :$) (or (:mz load) :$))))
+        structural-load-case-by-source (atom {})
+        _structural-load-cases
+        (doseq [load-case (:load-cases structural)]
+          (let [kind (or (:predefined-type load-case) :load-case)
+                common [(or (:global-id load-case)
+                            (str "LOAD_CASE_" (:id load-case))) :$
+                        (or (:name load-case) (str (:id load-case)))
+                        (or (:description load-case) :$)
+                        (or (:object-type load-case) :$) kind
+                        (or (:action-type load-case) :notdefined)
+                        (or (:action-source load-case) :notdefined)
+                        (or (:coefficient load-case) 1.0)
+                        (or (:purpose load-case) :$)]
+                load-case-ref
+                (if (= :load-case kind)
+                  (apply emit! :ifcstructuralloadcase
+                         (conj common (list* (or (:self-weight-coefficients load-case)
+                                                [0.0 0.0 0.0]))))
+                  (apply emit! :ifcstructuralloadgroup common))]
+            (swap! structural-load-case-by-source assoc
+                   (:id load-case) load-case-ref
+                   (:global-id load-case) load-case-ref)))
+        _structural-combinations
+        (doseq [combination (:combinations structural)]
+          (let [combination-ref
+                (emit! :ifcstructuralloadgroup
+                       (or (:global-id combination)
+                           (str "LOAD_COMBINATION_" (:id combination))) :$
+                       (or (:name combination) (str (:id combination)))
+                       (or (:description combination) :$)
+                       (or (:object-type combination) :$) :load-combination
+                       (or (:action-type combination) :notdefined)
+                       (or (:action-source combination) :notdefined)
+                       (or (:coefficient combination) 1.0)
+                       (or (:purpose combination) :$))]
+            (swap! structural-load-case-by-source assoc
+                   (:id combination) combination-ref
+                   (:global-id combination) combination-ref)
+            (doseq [[case-id factor] (:factors combination)
+                    :let [case-ref (get @structural-load-case-by-source case-id)]
+                    :when case-ref]
+              (emit! :ifcrelassignstogroupbyfactor
+                     (str "REL_STRUCTURAL_COMBINATION_" (:id combination) "_" case-id)
+                     :$ :$ :$ (list* [case-ref]) :$ combination-ref factor))))
+        structural-node-by-source (atom {})
+        _structural-nodes
+        (doseq [node (:nodes structural)]
+          (let [restraints (vec (take 6 (concat (:restraints node) (repeat false))))
+                condition-ref
+                (when (some true? restraints)
+                  (apply emit! :ifcboundarynodecondition
+                         (or (:condition-name node) :$)
+                         (map #(if % [:typed :ifcboolean true] :$) restraints)))
+                node-ref
+                (emit! :ifcstructuralpointconnection
+                       (or (:global-id node) (str "STRUCTURAL_NODE_" (:id node))) :$
+                       (or (:name node) (str (:id node)))
+                       (or (:description node) :$) (or (:object-type node) :$)
+                       (local! {:location (vec (take 3 (concat (:point node)
+                                                              (repeat 0.0))))})
+                       :$ (or condition-ref :$) :$)]
+            (swap! structural-node-by-source assoc
+                   (:id node) node-ref (:global-id node) node-ref)))
+        structural-member-by-source (atom {})
+        _structural-members
+        (doseq [member (:members structural)]
+          (let [start-node (or (get @structural-node-by-source (:start-node member))
+                               (get @structural-node-by-source (:start-node-global-id member)))
+                end-node (or (get @structural-node-by-source (:end-node member))
+                             (get @structural-node-by-source (:end-node-global-id member)))
+                start-point (or (:start-point member) [0.0 0.0 0.0])
+                end-point (or (:end-point member) [1.0 0.0 0.0])
+                delta (mapv - end-point start-point)
+                axis (or (:axis member) delta [1.0 0.0 0.0])
+                member-ref
+                (emit! :ifcstructuralcurvemember
+                       (or (:global-id member)
+                           (str "STRUCTURAL_MEMBER_" (:id member))) :$
+                       (or (:name member) (str (:id member)))
+                       (or (:description member) :$) (or (:object-type member) :$)
+                       (local! {:location start-point}) :$
+                       (or (:predefined-type member) :rigid-joined-member)
+                       (direction! axis))]
+            (swap! structural-member-by-source assoc
+                   (:id member) member-ref (:global-id member) member-ref)
+            (doseq [[suffix connection] [["START" start-node] ["END" end-node]]
+                    :when connection]
+              (emit! :ifcrelconnectsstructuralmember
+                     (str "REL_STRUCTURAL_" suffix "_" (:id member)) :$ suffix :$
+                     member-ref connection :$ :$ :$ :$))))
+        structural-action-refs (atom [])
+        _structural-actions
+        (doseq [load-case (:load-cases structural)
+                load (:loads load-case)]
+          (let [target-id (or (:node load) (:member load))
+                target (or (get @structural-node-by-source target-id)
+                           (get @structural-member-by-source target-id))
+                curve? (some? (:member load))
+                common [(or (:global-id load)
+                            (str "LOAD_ACTION_" (:id load))) :$
+                        (or (:name load) (str (:id load)))
+                        (or (:description load) :$) (or (:object-type load) :$)
+                        (if-let [placement (:placement load)] (local! placement) :$) :$
+                        (structural-load-ref! load)
+                        (or (:global-or-local load) :global-coords)]
+                action-ref
+                (if curve?
+                  (apply emit! :ifcstructuralcurveaction
+                         (into common [(boolean (:destabilizing-load load))
+                                       (or (:projected-or-true load) :true-length)
+                                       (or (:predefined-type load) :const)]))
+                  (apply emit! :ifcstructuralpointaction
+                         (conj common (boolean (:destabilizing-load load)))))]
+            (swap! structural-action-refs conj action-ref)
+            (when target
+              (emit! :ifcrelconnectsstructuralactivity
+                     (str "REL_STRUCTURAL_LOAD_TARGET_" (:id load)) :$ :$ :$
+                     target action-ref))
+            (when-let [load-case-ref (get @structural-load-case-by-source (:id load-case))]
+              (emit! :ifcrelassignstogroup
+                     (str "REL_STRUCTURAL_LOAD_CASE_" (:id load)) :$ :$ :$
+                     (list* [action-ref]) :$ load-case-ref))))
+        _structural-model
+        (when structural
+          (let [loaded-by (vec (vals (select-keys @structural-load-case-by-source
+                (concat (map :id (:load-cases structural))
+                        (map :id (:combinations structural))))))
+                model-ref
+                (emit! :ifcstructuralanalysismodel
+                       (or (:global-id structural) "STRUCTURAL_ANALYSIS_MODEL") :$
+                       (or (:name structural) "Structural Analysis Model")
+                       (or (:description structural) :$)
+                       (or (:object-type structural) :$)
+                       (or (:predefined-type structural) :loading-3d)
+                       (if-let [orientation (:orientation-of-2d-plane structural)]
+                         (axis! orientation) :$)
+                       (if (seq loaded-by) (list* loaded-by) :$) :$
+                       (if-let [placement (:shared-placement structural)]
+                         (local! placement) :$))
+                items (concat (vals (select-keys @structural-node-by-source
+                                                 (map :id (:nodes structural))))
+                              (vals (select-keys @structural-member-by-source
+                                                 (map :id (:members structural)))))]
+            (when (seq items)
+              (emit! :ifcrelassignstogroup "REL_STRUCTURAL_ANALYSIS_ITEMS"
+                     :$ :$ :$ (list* (vec items)) :$ model-ref))))
         _payload (when (some? (:model project))
             (emit! :ifcpropertysinglevalue "KOTOBA_MODEL_EDN" :$
                    [:typed :ifctext (pr-str (:model project))] :$))]
@@ -2165,6 +2339,137 @@
              (when-not (= :$ (get-in entity [:args 10]))
                (get-in entity [:args 10]))))))
 
+(defn- structural-load [table ref]
+  (when-let [entity (referenced table ref)]
+    (when (#{:ifcstructuralloadsingleforce :ifcstructuralloadlinearforce}
+           (:type entity))
+      (let [linear? (= :ifcstructuralloadlinearforce (:type entity))
+            keys (if linear? [:name :qx :qy :qz :qmx :qmy :qmz]
+                     [:name :fx :fy :fz :mx :my :mz])]
+      (reduce-kv (fn [result key value]
+                   (if (= :$ value) result (assoc result key value)))
+                 {} (zipmap keys (:args entity)))))))
+
+(defn- structural-analysis [table entities]
+  (when-let [model (first (filter #(= :ifcstructuralanalysismodel (:type %))
+                                  entities))]
+    (let [nodes (filter #(= :ifcstructuralpointconnection (:type %)) entities)
+          members (filter #(= :ifcstructuralcurvemember (:type %)) entities)
+          actions (filter #(#{:ifcstructuralpointaction :ifcstructuralcurveaction}
+                             (:type %)) entities)
+          load-groups (filter #(#{:ifcstructuralloadcase :ifcstructuralloadgroup}
+                                 (:type %)) entities)
+          structural-links
+          (filter #(= :ifcrelconnectsstructuralmember (:type %)) entities)
+          action-target
+          (into {} (map (fn [relation]
+                          [(ref-id (get-in relation [:args 5]))
+                           (ref-id (get-in relation [:args 4]))]))
+                (filter #(= :ifcrelconnectsstructuralactivity (:type %)) entities))
+          assigned-by-group
+          (reduce (fn [result relation]
+                    (update result (ref-id (get-in relation [:args 6]))
+                            (fnil into [])
+                            (mapv ref-id (list-values (get-in relation [:args 4])))))
+                  {} (filter #(= :ifcrelassignstogroup (:type %)) entities))
+          combination-factors
+          (reduce (fn [result relation]
+                    (let [combination-id (ref-id (get-in relation [:args 6]))
+                          factor (get-in relation [:args 7])]
+                      (reduce #(assoc-in %1 [combination-id (ref-id %2)] factor)
+                              result (list-values (get-in relation [:args 4])))))
+                  {} (filter #(= :ifcrelassignstogroupbyfactor (:type %)) entities))
+          nodes-by-id (into {} (map (juxt :id identity)) nodes)
+          node-value
+          (fn [node]
+            (let [condition (referenced table (get-in node [:args 7]))]
+              {:id (:id node) :global-id (get-in node [:args 0])
+               :name (get-in node [:args 2])
+               :description (get-in node [:args 3])
+               :object-type (get-in node [:args 4])
+               :point (get-in (local-placement table (get-in node [:args 5]))
+                              [:location])
+               :restraints
+               (if (= :ifcboundarynodecondition (:type condition))
+                 (mapv #(true? (typed-value %)) (subvec (:args condition) 1 7))
+                 [false false false false false false])}))
+          member-value
+          (fn [member]
+            (let [links (filter #(= (:id member)
+                                    (ref-id (get-in % [:args 4]))) structural-links)
+                  by-end (into {} (map (fn [relation]
+                                         [(string/upper-case
+                                           (str (get-in relation [:args 2])))
+                                          (ref-id (get-in relation [:args 5]))])) links)
+                  start-id (get by-end "START")
+                  end-id (get by-end "END")]
+              {:id (:id member) :global-id (get-in member [:args 0])
+               :name (get-in member [:args 2])
+               :description (get-in member [:args 3])
+               :object-type (get-in member [:args 4])
+               :start-node start-id :end-node end-id
+               :start-node-global-id (get-in (get nodes-by-id start-id) [:args 0])
+               :end-node-global-id (get-in (get nodes-by-id end-id) [:args 0])
+               :start-point (get-in (local-placement table (get-in member [:args 5]))
+                                    [:location])
+               :predefined-type (get-in member [:args 7])
+               :axis (direction table (get-in member [:args 8]))}))
+          action-value
+          (fn [action]
+            (let [curve? (= :ifcstructuralcurveaction (:type action))
+                  target-id (get action-target (:id action))]
+              (cond->
+               (merge {:id (:id action) :global-id (get-in action [:args 0])
+                       :name (get-in action [:args 2])
+                       :description (get-in action [:args 3])
+                       :object-type (get-in action [:args 4])
+                       :placement (local-placement table (get-in action [:args 5]))
+                       :global-or-local (get-in action [:args 8])
+                       :destabilizing-load (boolean (get-in action [:args 9]))}
+                      (structural-load table (get-in action [:args 7])))
+                curve? (assoc :member target-id
+                              :projected-or-true (get-in action [:args 10])
+                              :predefined-type (get-in action [:args 11]))
+                (not curve?) (assoc :node target-id))))
+          actions-by-id (into {} (map (juxt :id action-value)) actions)]
+      {:id (:id model) :global-id (get-in model [:args 0])
+       :name (get-in model [:args 2]) :description (get-in model [:args 3])
+       :object-type (get-in model [:args 4])
+       :predefined-type (get-in model [:args 5])
+       :orientation-of-2d-plane (axis-placement table (get-in model [:args 6]))
+       :shared-placement (local-placement table (get-in model [:args 9]))
+       :nodes (mapv node-value nodes)
+       :members (mapv member-value members)
+       :load-cases
+       (mapv (fn [load-group]
+               (cond->
+                {:id (:id load-group) :global-id (get-in load-group [:args 0])
+                 :name (get-in load-group [:args 2])
+                 :description (get-in load-group [:args 3])
+                 :object-type (get-in load-group [:args 4])
+                 :predefined-type (get-in load-group [:args 5])
+                 :action-type (get-in load-group [:args 6])
+                 :action-source (get-in load-group [:args 7])
+                 :coefficient (get-in load-group [:args 8])
+                 :purpose (get-in load-group [:args 9])
+                 :loads (vec (keep actions-by-id
+                                   (get assigned-by-group (:id load-group))))}
+                 (= :ifcstructuralloadcase (:type load-group))
+                 (assoc :self-weight-coefficients
+                        (vec (list-values (get-in load-group [:args 10]))))))
+             (remove #(= :load-combination (get-in % [:args 5])) load-groups))
+       :combinations
+       (mapv (fn [combination]
+               {:id (:id combination) :global-id (get-in combination [:args 0])
+                :name (get-in combination [:args 2])
+                :description (get-in combination [:args 3])
+                :action-type (get-in combination [:args 6])
+                :action-source (get-in combination [:args 7])
+                :coefficient (get-in combination [:args 8])
+                :purpose (get-in combination [:args 9])
+                :factors (get combination-factors (:id combination) {})})
+             (filter #(= :load-combination (get-in % [:args 5])) load-groups))})))
+
 (defn read-external-spf [text]
   (let [parsed (part21/parse-file text)
         entities (:part21/entities parsed)
@@ -2235,6 +2540,7 @@
          :ifc/elements products
          :ifc/groups (groups table entities)
          :ifc/connections (port-connections table entities (:by-id port-data))
+         :ifc/structural-analysis (structural-analysis table entities)
          :ifc/classifications-by-object classifications
          :ifc/source :external-spf
          :ifc/raw-spf text
