@@ -1072,3 +1072,38 @@
                           "IFCGEOMETRICREPRESENTATIONCONTEXT($, 'Model', 3,"))
     (is (not (string/includes? output "'KOTOBA_REL_PROJECT_SPATIAL'")))
     (is (re-find #"IFCRELAGGREGATES\('[0-3][0-9A-Za-z_$]{21}'" output))))
+
+(deftest structural-analysis-model-round-trips-through-standard-ifc-entities
+  (let [structural
+        {:id :frame :name "Frame analysis" :predefined-type :loading-3d
+         :nodes [{:id :n1 :name "N1" :point [0.0 0.0 0.0]
+                  :restraints [true true true true true true]}
+                 {:id :n2 :name "N2" :point [6.0 0.0 0.0]}]
+         :members [{:id :m1 :name "M1" :start-node :n1 :end-node :n2
+                    :start-point [0.0 0.0 0.0] :end-point [6.0 0.0 0.0]
+                    :predefined-type :rigid-joined-member}]
+         :load-cases
+         [{:id :dead :name "Dead" :predefined-type :load-case
+           :action-type :permanent-g :action-source :dead-load-g
+           :self-weight-coefficients [0.0 0.0 -1.0]
+           :loads [{:id :p1 :name "Point load" :node :n2 :fz -10000.0}
+                   {:id :q1 :name "Line load" :member :m1 :qy -2500.0}]}]
+         :combinations [{:id :uls :name "ULS" :factors {:dead 1.35}}]}
+        document (ifc/exchange-document
+                  {:project {:global-id "KOTOBA_PROJECT" :name "Structure"}
+                   :elements [] :structural-analysis structural})
+        output (ifc/write-spf document)
+        imported (:ifc/structural-analysis (ifc/read-document output))]
+    (is (string/includes? output "IFCSTRUCTURALANALYSISMODEL"))
+    (is (string/includes? output "IFCSTRUCTURALCURVEMEMBER"))
+    (is (string/includes? output "IFCSTRUCTURALPOINTCONNECTION"))
+    (is (string/includes? output "IFCSTRUCTURALLOADCASE"))
+    (is (= [true true true true true true]
+           (get-in imported [:nodes 0 :restraints])))
+    (is (= #{"N1" "N2"} (set (map :name (:nodes imported)))))
+    (is (= "M1" (get-in imported [:members 0 :name])))
+    (is (= 2 (count (get-in imported [:load-cases 0 :loads]))))
+    (is (= 1.35 (-> imported :combinations first :factors vals first)))
+    (is (= #{-10000.0 -2500.0}
+           (set (map #(or (:fz %) (:qy %))
+                     (get-in imported [:load-cases 0 :loads])))))))
