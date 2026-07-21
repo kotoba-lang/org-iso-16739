@@ -1,0 +1,19 @@
+{:source/repository "https://github.com/buildingSMART/Sample-Test-Files"
+ :source/commit "cecf656112a54a0d8cdd8b06b9398bfea5163886"
+ :source/license "CC-BY-4.0"
+ :fixtures
+ [{:file "buildingSMART-tessellation-colors.ifc"
+   :source/path "IFC 4.0.2.1 (IFC 4)/ISO Spec - ReferenceView_V1.2/tessellation-with-individual-colors.ifc"
+   :expected/schema "IFC4" :expected/products 1}
+  {:file "buildingSMART-column-tessellation.ifc"
+   :source/path "IFC 4.0.2.1 (IFC 4)/ISO Spec - ReferenceView_V1.2/column-straight-rectangle-tessellation.ifc"
+   :expected/schema "IFC4" :expected/products 1}
+  {:file "buildingSMART-tessellated-item.ifc"
+   :source/path "IFC 4.0.2.1 (IFC 4)/ISO Spec - ReferenceView_V1.2/tessellated-item.ifc"
+   :expected/schema "IFC4" :expected/products 1}
+  {:file "buildingSMART-basin-tessellation.ifc"
+   :source/path "IFC 4.0.2.1 (IFC 4)/ISO Spec - ReferenceView_V1.2/basin-tessellation.ifc"
+   :expected/schema "IFC4" :expected/products 1}
+  {:file "buildingSMART-wall-opening-window.ifc"
+   :source/path "IFC 4.0.2.1 (IFC 4)/ISO Spec - ReferenceView_V1.2/wall-with-opening-and-window.ifc"
+   :expected/schema "IFC4" :expected/products 2}]}
