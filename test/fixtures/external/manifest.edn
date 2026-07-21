@@ -21,7 +21,10 @@
  [{:name "PCERT Architecture IFC4"
    :source/path "IFC 4.0.2.1 (IFC 4)/PCERT-Sample-Scene/Building-Architecture.ifc"
    :sha256 "3ff9b10bd00c7b96dded51e7ca5a6b69efbea38b049adcdd05fcd247de7e70d5"
-   :expected/schema "IFC4" :expected/products 13}
+   :expected/schema "IFC4" :expected/products 13
+   :expected/georeference
+   {:crs "EPSG:32760" :model-point [0.0 0.0 0.0]
+    :map-point [729013348.8297004 9063992684.697363 1300.0000000000011]}}
   {:name "PCERT HVAC IFC4"
    :source/path "IFC 4.0.2.1 (IFC 4)/PCERT-Sample-Scene/Building-Hvac.ifc"
    :sha256 "11a8552bc555fa44dfdc49374d1ab2da0a16104c10f086af509f500ce03fa2b3"
@@ -33,7 +36,10 @@
   {:name "PCERT Architecture IFC4.3"
    :source/path "IFC 4.3.2.0 (IFC4X3_ADD2)/PCERT-Sample-Scene/Building-Architecture.ifc"
    :sha256 "a42962f9e2068040ac96636b1e7f6117150b6c0e3371f81088721b22796e463f"
-   :expected/schema "IFC4X3_ADD2" :expected/products 12}
+   :expected/schema "IFC4X3_ADD2" :expected/products 12
+   :expected/georeference
+   {:crs "EPSG:32760" :model-point [0.0 0.0 0.0]
+    :map-point [729013348.8297004 9063992684.697363 1300.0000000000011]}}
   {:name "PCERT HVAC IFC4.3"
    :source/path "IFC 4.3.2.0 (IFC4X3_ADD2)/PCERT-Sample-Scene/Building-Hvac.ifc"
    :sha256 "5451d81cd76a5743b33e0a685bf9c45fa283ca62f3807542c858c4d90aad7919"
