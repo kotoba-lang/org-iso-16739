@@ -1,6 +1,8 @@
 (ns ifc.external-validator-runner
   "Generate representative IFC and run pinned IfcOpenShell schema/WHERE rules."
-  (:require [ifc.core :as ifc])
+  (:require [clojure.edn :as edn]
+            [ifc.core :as ifc]
+            [ifc.corpus-runner :as corpus])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -59,18 +61,38 @@
                {:id :q1 :name "Q1" :member :m1 :qy -250.0}]}]
      :combinations [{:id :uls :name "ULS" :factors {:dead 1.35}}]}}))
 
+(defn- run-validator! [arguments]
+  (let [command (into ["uv" "run" "--isolated"
+                       "--with" "ifcopenshell==0.8.5"
+                       "--with" "pytest"
+                       "python" "dev/ifc/ifcopenshell_validate.py"] arguments)
+        process (-> (ProcessBuilder. command) .inheritIO .start)
+        status (.waitFor process)]
+    (when-not (zero? status)
+      (throw (ex-info "IfcOpenShell validation failed" {:exit status})))))
+
 (defn -main [& _]
   (let [path (Files/createTempFile "kotoba-ifc-validation-" ".ifc"
-                                   (make-array FileAttribute 0))]
+                                   (make-array FileAttribute 0))
+        manifest (edn/read-string (slurp corpus/manifest-path))
+        pairs
+        (mapv (fn [fixture]
+                (let [{:keys [text]} (corpus/fetch-fixture manifest fixture)
+                      baseline (Files/createTempFile "kotoba-ifc-input-" ".ifc"
+                                                     (make-array FileAttribute 0))
+                      candidate (Files/createTempFile "kotoba-ifc-hybrid-" ".ifc"
+                                                      (make-array FileAttribute 0))
+                      report (ifc/hybrid-roundtrip-report
+                              text #(assoc-in % [:ifc/elements 0 :name]
+                                              (str "Validated edit — " (:name fixture))))]
+                  (spit (.toFile baseline) text)
+                  (spit (.toFile candidate) (:roundtrip/output report))
+                  [baseline candidate]))
+              (:remote-fixtures manifest))]
     (try
       (spit (.toFile path) (ifc/write-spf generated-document))
-      (let [command (into ["uv" "run" "--isolated"
-                           "--with" "ifcopenshell==0.8.5"
-                           "--with" "pytest"
-                           "python" "dev/ifc/ifcopenshell_validate.py"]
-                          (conj official-fixtures (str path)))
-            process (-> (ProcessBuilder. command) .inheritIO .start)
-            status (.waitFor process)]
-        (when-not (zero? status)
-          (throw (ex-info "IfcOpenShell validation failed" {:exit status}))))
-      (finally (Files/deleteIfExists path)))))
+      (run-validator! (conj official-fixtures (str path)))
+      (run-validator! (into ["--pairs"] (mapcat #(map str %) pairs)))
+      (finally
+        (doseq [pair pairs path pair] (Files/deleteIfExists path))
+        (Files/deleteIfExists path)))))

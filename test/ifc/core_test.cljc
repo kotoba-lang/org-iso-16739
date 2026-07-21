@@ -639,6 +639,21 @@
       (is (= 2 (:ifc/raw-entity-count (ifc/read-document output)))
           "hybrid export retains the unknown entity graph while applying the edit"))))
 
+(deftest name-only-external-edit-preserves-all-other-step-lexemes
+  (let [text (str "ISO-10303-21;\nHEADER;\n"
+                  "FILE_DESCRIPTION(('CoordinationView'),'2;1');\n"
+                  "FILE_NAME('lexical.ifc','',('External'),('Vendor'),'','','');\n"
+                  "FILE_SCHEMA(('IFC2X3'));\nENDSEC;\nDATA;\n"
+                  "#1=IFCPROJECT('project-guid',$,'Old Name',$,$,$,$,$,$);\n"
+                  "#2=IFCDIMENSIONALEXPONENTS(0,0,0,0,0,0,0);\n"
+                  "#3=IFCOWNERHISTORY($,$,$,.NOCHANGE.,$,$,$,1331901293);\n"
+                  "ENDSEC;\nEND-ISO-10303-21;\n")
+        edited (assoc-in (ifc/read-document text) [:ifc/project :name] "Owner's Project")
+        output (ifc/write-spf edited)]
+    (is (= (string/replace text "'Old Name'" "'Owner''s Project'") output))
+    (is (string/includes? output "IFCDIMENSIONALEXPONENTS(0,0,0,0,0,0,0)"))
+    (is (string/includes? output ",$,$,$,1331901293);"))))
+
 (deftest forced-standard-rewrite-retains-ifc4-schema
   (let [document (assoc (ifc/exchange-document
                          {:project {:global-id "p" :name "IFC4 Project"}
