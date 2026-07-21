@@ -40,24 +40,60 @@
    :ids/title title :ids/author author
    :ids/specifications (mapv specification specifications)})
 
+(def numeric-pattern #"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[Ee][+-]?[0-9]+)?")
+
+(defn- parsed-number [value]
+  (cond
+    (number? value) (double value)
+    (and (string? value) (re-matches numeric-pattern value))
+    (#?(:clj Double/parseDouble :cljs js/parseFloat) value)
+    :else nil))
+
+(defn- lexical-value [value]
+  (cond
+    (true? value) "true"
+    (false? value) "false"
+    (keyword? value) (string/upper-case (name value))
+    (nil? value) nil
+    :else (str value)))
+
+(defn- numeric-tolerance [_ expected]
+  (* 1.0e-6 (inc (#?(:clj Math/abs :cljs js/Math.abs) expected))))
+
+(defn- floating-slack [a b]
+  (* 1.0e-15 (max 1.0 (#?(:clj Math/abs :cljs js/Math.abs) a)
+                         (#?(:clj Math/abs :cljs js/Math.abs) b))))
+
+(defn- values-equivalent? [actual expected]
+  (let [a (parsed-number actual) b (parsed-number expected)]
+    (cond
+      (and (some? a) (some? b))
+      (<= (#?(:clj Math/abs :cljs js/Math.abs) (- a b))
+          (+ (numeric-tolerance a b) (floating-slack a b)))
+      :else (= (lexical-value actual) (lexical-value expected)))))
+
 (defn- numeric-bound? [operator actual expected]
-  (and (number? actual) (number? expected) (operator actual expected)))
+  (let [actual (parsed-number actual) expected (parsed-number expected)]
+    (and (some? actual) (some? expected) (operator actual expected))))
 
 (defn matches-restriction?
   [actual value-restriction]
   (if (nil? value-restriction)
     true
     (let [{:keys [value values pattern min-inclusive max-inclusive
-                  min-exclusive max-exclusive min-length max-length]}
+                  min-exclusive max-exclusive length min-length max-length]}
           (restriction value-restriction)
           text (when (some? actual) (str actual))]
-      (and (if (contains? (restriction value-restriction) :value) (= value actual) true)
-           (if (seq values) (contains? (set values) actual) true)
-           (if pattern (and text (boolean (re-matches (re-pattern pattern) text))) true)
+      (and (if (contains? (restriction value-restriction) :value)
+             (values-equivalent? actual value) true)
+           (if (seq values) (boolean (some #(values-equivalent? actual %) values)) true)
+           (if pattern (and text (boolean (re-matches (re-pattern pattern)
+                                                       (lexical-value actual)))) true)
            (if (some? min-inclusive) (numeric-bound? >= actual min-inclusive) true)
            (if (some? max-inclusive) (numeric-bound? <= actual max-inclusive) true)
            (if (some? min-exclusive) (numeric-bound? > actual min-exclusive) true)
            (if (some? max-exclusive) (numeric-bound? < actual max-exclusive) true)
+           (if (some? length) (and text (= (count text) length)) true)
            (if (some? min-length) (and text (>= (count text) min-length)) true)
            (if (some? max-length) (and text (<= (count text) max-length)) true)))))
 
@@ -66,54 +102,308 @@
    :count :ifccountmeasure :weight :ifcmassmeasure :time :ifctimemeasure
    :number :ifcnumericmeasure})
 
+;; Attribute positions are the flattened EXPRESS order used by Part 21.  The
+;; common supertypes cover all rooted objects; the explicit entries cover
+;; resource/process entities which are valid IDS targets even though they are
+;; not IfcProducts.
+(def ^:private root-attribute-indexes
+  {"GLOBALID" 0 "OWNERHISTORY" 1 "NAME" 2 "DESCRIPTION" 3})
+
+(def ^:private raw-attribute-indexes
+  {:ifctasktime
+   {"NAME" 0 "DATAORIGIN" 1 "USERDEFINEDDATAORIGIN" 2 "DURATIONTYPE" 3
+    "SCHEDULEDURATION" 4 "SCHEDULESTART" 5 "SCHEDULEFINISH" 6
+    "EARLYSTART" 7 "EARLYFINISH" 8 "LATESTART" 9 "LATEFINISH" 10
+    "FREEFLOAT" 11 "TOTALFLOAT" 12 "ISCRITICAL" 13 "STATUSTIME" 14
+    "ACTUALDURATION" 15 "ACTUALSTART" 16 "ACTUALFINISH" 17
+    "REMAININGTIME" 18 "COMPLETION" 19}
+   :ifcsurfacestylerefraction {"REFRACTIONINDEX" 0 "DISPERSIONFACTOR" 1}
+   :ifcclassification
+   {"SOURCE" 0 "EDITION" 1 "EDITIONDATE" 2 "NAME" 3 "DESCRIPTION" 4
+    "LOCATION" 5 "REFERENCETOKENS" 6}
+   :ifcperson
+   {"IDENTIFICATION" 0 "FAMILYNAME" 1 "GIVENNAME" 2 "MIDDLENAMES" 3
+    "PREFIXTITLES" 4 "SUFFIXTITLES" 5 "ROLES" 6 "ADDRESSES" 7}
+   :ifcquantitycount
+   {"NAME" 0 "DESCRIPTION" 1 "UNIT" 2 "COUNTVALUE" 3 "FORMULA" 4}
+   :ifcmateriallayerset
+   {"MATERIALLAYERS" 0 "LAYERSETNAME" 1 "DESCRIPTION" 2}
+   :ifcpresentationlayerwithstyle
+   {"NAME" 0 "DESCRIPTION" 1 "ASSIGNEDITEMS" 2 "IDENTIFIER" 3
+    "LAYERON" 4 "LAYERFROZEN" 5 "LAYERBLOCKED" 6 "LAYERSTYLES" 7}
+   :ifcrelconnectspathelements
+   (merge root-attribute-indexes
+          {"CONNECTIONGEOMETRY" 4 "RELATINGELEMENT" 5 "RELATEDELEMENT" 6
+           "RELATINGPRIORITIES" 7 "RELATEDPRIORITIES" 8
+           "RELATEDCONNECTIONTYPE" 9 "RELATINGCONNECTIONTYPE" 10})
+   :ifccartesianpoint {"COORDINATES" 0}
+   :ifcsurfacestylerendering
+   {"SURFACECOLOUR" 0 "TRANSPARENCY" 1 "DIFFUSECOLOUR" 2
+    "TRANSMISSIONCOLOUR" 3 "DIFFUSEREFLECTIONCOLOUR" 4
+    "REFLECTIONCOLOUR" 5 "SPECULARCOLOUR" 6
+    "SPECULARHIGHLIGHT" 7 "REFLECTANCEMETHOD" 8}
+   :ifctask
+   (merge root-attribute-indexes
+          {"OBJECTTYPE" 4 "IDENTIFICATION" 5 "LONGDESCRIPTION" 6
+           "STATUS" 7 "WORKMETHOD" 8 "ISMILESTONE" 9 "PRIORITY" 10
+           "TASKTIME" 11 "PREDEFINEDTYPE" 12})
+   :ifcstairflight
+   (merge root-attribute-indexes
+          {"OBJECTTYPE" 4 "OBJECTPLACEMENT" 5 "REPRESENTATION" 6 "TAG" 7
+           "NUMBEROFRISERS" 8 "NUMBEROFTREADS" 9 "RISERHEIGHT" 10
+           "TREADLENGTH" 11 "PREDEFINEDTYPE" 12})
+   :ifcwall (merge root-attribute-indexes {"OBJECTTYPE" 4 "TAG" 7 "PREDEFINEDTYPE" 8})
+   :ifcwallstandardcase
+   (merge root-attribute-indexes {"OBJECTTYPE" 4 "TAG" 7 "PREDEFINEDTYPE" 8})
+   :ifcbeam (merge root-attribute-indexes {"OBJECTTYPE" 4 "TAG" 7 "PREDEFINEDTYPE" 8})
+   :ifcslab (merge root-attribute-indexes {"OBJECTTYPE" 4 "TAG" 7 "PREDEFINEDTYPE" 8})
+   :ifcspace (merge root-attribute-indexes {"OBJECTTYPE" 4 "PREDEFINEDTYPE" 9})
+   :ifcfurniture
+   (merge root-attribute-indexes {"OBJECTTYPE" 4 "TAG" 7 "PREDEFINEDTYPE" 8})
+   :ifcinventory
+   (merge root-attribute-indexes {"OBJECTTYPE" 4 "PREDEFINEDTYPE" 5})
+   :ifcwalltype
+   (merge root-attribute-indexes {"ELEMENTTYPE" 8 "PREDEFINEDTYPE" 9})
+   :ifctasktype
+   (merge root-attribute-indexes {"PROCESSTYPE" 8 "PREDEFINEDTYPE" 9})})
+
+(defn- raw-null? [value]
+  (or (nil? value) (= :$ value) (= :* value)))
+
+(defn- valid-attribute-value? [value]
+  (and (not (raw-null? value))
+       (not (#{:unknown :u} value))
+       (not (and (string? value) (empty? value)))
+       (not (and (sequential? value)
+                 (or (empty? value)
+                     (and (= :list (first value)) (= 1 (count value))))))))
+
+(defn- raw-object [entity]
+  {:id (:id entity)
+   :ifc/entity-type (:type entity)
+   :ids/raw-args (:args entity)
+   :ids/attribute-indexes
+   (merge (when (string/starts-with? (name (:type entity)) "ifc")
+            root-attribute-indexes)
+          (get raw-attribute-indexes (:type entity)))})
+
+(defn- validation-objects [ifc-document]
+  (let [classifications (:ifc/classifications-by-object ifc-document)
+        raw (into {}
+                  (map (fn [entity]
+                         [(:id entity)
+                          (assoc (raw-object entity) :classifications
+                                 (get classifications (:id entity) []))]))
+                  (:ifc/raw-entities ifc-document))
+        spatial (when-let [project (:ifc/project ifc-document)]
+                  (tree-seq #(seq (:children %)) :children project))
+        elements (:ifc/elements ifc-document)
+        rich (concat spatial (:ifc/groups ifc-document) elements
+                     (keep :type-object elements))]
+    (->> rich
+         (reduce (fn [objects object]
+                   (update objects (:id object) merge
+                           (assoc object :ids/units (:ifc/units ifc-document)))) raw)
+         vals
+         (filter #(or (:ifc/entity-type %) (:type %) (:kind %)))
+         (sort-by :id)
+         vec)))
+
 (defn- property-values [element]
-  (concat
-   (for [[set-name property-set] (:property-sets element)
+  (let [property-sets (merge (:property-sets (:type-object element))
+                             (:property-sets element))]
+   (concat
+   (for [[set-name property-set] property-sets
          [property-name property] (:properties property-set)]
      {:set set-name :name property-name
-      :value (if (contains? property :value) (:value property)
-                 (or (:values property) (:set-point property)))
-      :data-type (:value-type property) :source :property})
+      :value (cond
+               (contains? property :value) (:value property)
+               (= :bounded (:kind property))
+               (remove nil? [(:lower property) (:upper property) (:set-point property)])
+               :else (:values property))
+      :data-type (:value-type property) :typed-values (:typed-values property)
+      :unit (:unit property) :source :property})
    (for [[set-name quantity-set] (:quantity-sets element)
          [quantity-name quantity] (:quantities quantity-set)]
      {:set set-name :name quantity-name :value (:value quantity)
       :data-type (get quantity-data-types (:kind quantity) (:kind quantity))
-      :source :quantity})))
+      :source :quantity}))))
+
+(def ^:private measure-unit-types
+  {:ifclengthmeasure :lengthunit :ifcareameasure :areaunit
+   :ifcvolumemeasure :volumeunit :ifctimemeasure :timeunit
+   :ifcmassmeasure :massunit})
+
+(defn- normalized-property-value [element property value]
+  (if (number? value)
+    (let [unit-type (get measure-unit-types (:data-type property))
+          unit (or (:unit property) (get (:ids/units element) unit-type))
+          scale (or (:scale unit) 1.0)]
+      (* value scale))
+    value))
+
+(defn- property-requirement-matches? [element facet property]
+  (let [typed-values (:typed-values property)
+        values (if (seq typed-values)
+                 (keep (fn [{:keys [value value-type]}]
+                         (when (or (nil? (:data-type facet))
+                                   (= (:data-type facet) value-type)) value))
+                       typed-values)
+                 (let [value (:value property)]
+                   (if (sequential? value) value [value])))
+        data-type-pass? (if (seq typed-values)
+                          (seq values)
+                          (or (nil? (:data-type facet))
+                              (= (:data-type facet) (:data-type property))))]
+    (and data-type-pass?
+         (if (:value facet)
+           (boolean
+            (some #(matches-restriction?
+                    (normalized-property-value element property %)
+                    (:value facet)) values))
+           true))))
 
 (defn- material-values [element]
-  (let [assignment (:material element)]
-    (if (= :layer-set-usage (:kind assignment))
-      (mapcat (fn [layer]
-                (remove nil? [(:name layer) (:category layer)
-                              (get-in layer [:material :name])
-                              (get-in layer [:material :category])]))
-              (get-in assignment [:layer-set :layers]))
-      (remove nil? [(:name assignment) (:category assignment)]))))
+  (let [assignment (or (:material element) (get-in element [:type-object :material]))]
+    (letfn [(values [node]
+              (when node
+                (concat
+                 (remove nil? [(:name node) (:category node)])
+                 (values (:material node))
+                 (values (:layer-set node))
+                 (mapcat values (:layers node))
+                 (mapcat values (:materials node))
+                 (mapcat values (:constituents node))
+                 (mapcat values (:profiles node)))))]
+      (values assignment))))
 
 (defn- classification-values [element]
-  (mapcat (fn [classification]
-            [{:system (get-in classification [:source :name])
-              :value (:identification classification)
-              :name (:name classification)}])
-          (:classifications element)))
+  (let [occurrence (:classifications element)
+        occurrence-systems (set (keep #(get-in % [:source :name]) occurrence))
+        inherited (remove #(contains? occurrence-systems (get-in % [:source :name]))
+                          (get-in element [:type-object :classifications]))]
+    (mapcat (fn [classification]
+              (let [values (or (seq (:identification-path classification))
+                               [(:identification classification)])]
+                (map (fn [value]
+                       {:system (get-in classification [:source :name])
+                        :value value :name (:name classification)})
+                     values)))
+            (concat occurrence inherited))))
 
 (defn- spatial-index [project]
   (into {}
         (map (juxt :id identity))
         (tree-seq #(seq (:children %)) :children project)))
 
+(defn- ref-id [value]
+  (when (and (vector? value) (= :ref (first value))) (second value)))
+
+(defn- refs [value]
+  (keep ref-id (if (and (vector? value) (= :list (first value))) (rest value) [])))
+
+(defn- relation-index [entities]
+  (reduce
+   (fn [index entity]
+     (let [args (:args entity)
+           [relation children parent]
+           (case (:type entity)
+             :ifcrelaggregates [:IFCRELAGGREGATES (refs (get args 5)) (ref-id (get args 4))]
+             :ifcrelnests [:IFCRELNESTS (refs (get args 5)) (ref-id (get args 4))]
+             :ifcrelcontainedinspatialstructure
+             [:IFCRELCONTAINEDINSPATIALSTRUCTURE (refs (get args 4)) (ref-id (get args 5))]
+             :ifcrelassignstogroup [:IFCRELASSIGNSTOGROUP (refs (get args 4)) (ref-id (get args 6))]
+             nil)]
+       (if (and relation parent)
+         (reduce #(assoc-in %1 [relation %2] parent) index children)
+         index)))
+   {} entities))
+
+(defn- parent-chain [parents id]
+  (loop [current id result [] seen #{}]
+    (if-let [parent (get parents current)]
+      (if (contains? seen parent) result
+          (recur parent (conj result parent) (conj seen parent)))
+      result)))
+
+(defn- part-of-objects [element context facet]
+  (let [relation (:relation facet)
+        relations (::relations context)
+        ids (if relation
+              (parent-chain (get relations relation {}) (:id element))
+              (mapcat #(parent-chain % (:id element)) (vals relations)))]
+    (keep context ids)))
+
 (defn- entity-name [element]
-  (let [value (-> (or (:ifc/entity-type element) (:type element) (:kind element))
+  (let [value (-> (or (:ifc/entity-type element) (:ifc/type element)
+                      (:type element) (:kind element))
                   name string/upper-case)]
     (if (string/starts-with? value "IFC") value (str "IFC" value))))
 
+(declare attribute-value)
+
+(defn- defined-predefined-type [value user-defined]
+  (when-not (or (raw-null? value) (= :notdefined value))
+    (if (= :userdefined value) user-defined value)))
+
+(defn- effective-predefined-type [element]
+  (or (defined-predefined-type
+       (or (:predefined-type element) (attribute-value element "PREDEFINEDTYPE"))
+       (or (:object-type element) (attribute-value element "OBJECTTYPE")
+           (attribute-value element "ELEMENTTYPE")
+           (attribute-value element "PROCESSTYPE")))
+      (let [type-object (:type-object element)]
+        (defined-predefined-type
+         (:predefined-type type-object)
+         (or (:element-type type-object) (:process-type type-object))))))
+
+(defn- predefined-lexical [value]
+  (cond
+    (keyword? value) (string/upper-case (name value))
+    (some? value) (str value)
+    :else nil))
+
+(defn- predefined-values [element]
+  (remove nil?
+          [(predefined-lexical (or (:predefined-type element)
+                                   (attribute-value element "PREDEFINEDTYPE")))
+           (predefined-lexical (effective-predefined-type element))]))
+
+(defn- attribute-pairs [element]
+  (let [raw-args (:ids/raw-args element)]
+    (concat
+     (for [[attribute index] (:ids/attribute-indexes element)
+           :let [value (get raw-args index)]
+           :when (not (raw-null? value))]
+       [attribute value])
+     (remove (comp raw-null? second)
+             [["NAME" (:name element)] ["GLOBALID" (:global-id element)]
+              ["DESCRIPTION" (:description element)] ["OBJECTTYPE" (:object-type element)]
+              ["TAG" (:tag element)] ["PREDEFINEDTYPE" (:predefined-type element)]]))))
+
+(defn- matching-attributes [element facet]
+  (let [name-restriction (or (:name-restriction facet)
+                             (when (some? (:name facet)) {:value (:name facet)}))
+        name-restriction (if (contains? name-restriction :value)
+                           (update name-restriction :value
+                                   #(string/upper-case (str %)))
+                           name-restriction)]
+    (filter (fn [[attribute _]]
+              (let [canonical (get {"GLOBALID" "GlobalId"
+                                    "OWNERHISTORY" "OwnerHistory"
+                                    "PREDEFINEDTYPE" "PredefinedType"
+                                    "OBJECTTYPE" "ObjectType"
+                                    "LAYERSETNAME" "LayerSetName"}
+                                   attribute
+                                   (string/capitalize (string/lower-case attribute)))]
+                (or (matches-restriction? attribute name-restriction)
+                    (matches-restriction? canonical name-restriction))))
+            (attribute-pairs element))))
+
 (defn- attribute-value [element attribute-name]
-  (case (string/upper-case (str attribute-name))
-    "NAME" (:name element)
-    "GLOBALID" (:global-id element)
-    "TAG" (:tag element)
-    "PREDEFINEDTYPE" (:predefined-type element)
-    (get element (keyword (string/lower-case (str attribute-name))))))
+  (some (fn [[attribute value]]
+          (when (= attribute (string/upper-case (str attribute-name))) value))
+        (attribute-pairs element)))
 
 (declare facet-matches?)
 
@@ -122,28 +412,32 @@
     :entity
     (and (matches-restriction? (entity-name element) (:name facet))
          (if (:predefined-type facet)
-           (matches-restriction? (some-> (:predefined-type element) name string/upper-case)
-                                 (:predefined-type facet))
+           (boolean (some #(matches-restriction? % (:predefined-type facet))
+                          (predefined-values element)))
            true))
 
     :attribute
-    (let [actual (attribute-value element (:name facet))]
-      (and (some? actual) (matches-restriction? actual (:value facet))))
+    (boolean
+     (some (fn [[_ actual]]
+             (and (valid-attribute-value? actual)
+                  (or (nil? (:value facet))
+                      ;; IDS value restrictions apply only to simple values.
+                      (and (not (coll? actual))
+                           (matches-restriction? actual (:value facet))))))
+           (matching-attributes element facet)))
 
     :property
-    (boolean
-     (some (fn [property]
-             (and (matches-restriction? (:set property) (:property-set facet))
-                  (matches-restriction? (:name property) (:name facet))
-                  (if (:data-type facet)
-                    (= (:data-type facet) (:data-type property)) true)
-                  (if (:value facet)
-                    (let [value (:value property)]
-                      (if (sequential? value)
-                        (some #(matches-restriction? % (:value facet)) value)
-                        (matches-restriction? value (:value facet))))
-                    true)))
-           (property-values element)))
+    (let [sets (->> (property-values element)
+                    (filter #(matches-restriction? (:set %) (:property-set facet)))
+                    (group-by :set))]
+      (and (seq sets)
+           (every? (fn [[_ properties]]
+                     (let [matching (filter #(matches-restriction? (:name %) (:name facet))
+                                            properties)]
+                       (and (seq matching)
+                            (every? #(property-requirement-matches? element facet %)
+                                    matching))))
+                   sets)))
 
     :classification
     (boolean
@@ -157,10 +451,11 @@
                    (material-values element)))
 
     :part-of
-    (let [container (get spatial (:container-id element))]
-      (and container
-           (if-let [entity (:entity facet)]
-             (facet-matches? container spatial (assoc entity :type :entity)) true)))
+    (boolean
+     (some (fn [whole]
+             (if-let [entity (:entity facet)]
+               (facet-matches? whole spatial (assoc entity :type :entity)) true))
+           (part-of-objects element spatial facet)))
     false))
 
 (defn facet-matches? [element spatial facet]
@@ -170,18 +465,16 @@
 (defn- facet-present? [element spatial facet]
   (case (:type facet)
     :entity true
-    :attribute (some? (attribute-value element (:name facet)))
+    :attribute (boolean (seq (matching-attributes element facet)))
     :property
     (boolean
      (some #(and (matches-restriction? (:set %) (:property-set facet))
                  (matches-restriction? (:name %) (:name facet)))
            (property-values element)))
     :classification
-    (boolean
-     (some #(matches-restriction? (:system %) (:system facet))
-           (classification-values element)))
+    (boolean (seq (classification-values element)))
     :material (seq (material-values element))
-    :part-of (contains? spatial (:container-id element))
+    :part-of (boolean (seq (part-of-objects element spatial facet)))
     false))
 
 (defn- requirement-result [element spatial requirement]
@@ -199,10 +492,9 @@
 (defn- specification-result [ifc-document spatial spec]
   (let [schema (:ifc/schema ifc-document)
         schema-supported? (contains? (:ids.specification/ifc-versions spec) schema)
-        applicable (if schema-supported?
-                     (filterv #(every? (partial facet-matches? % spatial)
-                                      (:ids.specification/applicability spec))
-                              (:ifc/elements ifc-document)) [])
+        applicable (filterv #(every? (partial facet-matches? % spatial)
+                                     (:ids.specification/applicability spec))
+                            (validation-objects ifc-document))
         count-applicable (count applicable)
         min-occurs (:ids.specification/min-occurs spec)
         max-occurs (:ids.specification/max-occurs spec)
@@ -220,7 +512,7 @@
                    :ids.object/pass? (every? :ids.requirement/pass? requirements)
                    :ids.object/requirements requirements}))
               applicable)
-        pass? (and schema-supported? occurrence-pass?
+        pass? (and occurrence-pass?
                    (every? :ids.object/pass? objects))]
     {:ids.specification/name (:ids.specification/name spec)
      :ids.specification/pass? pass?
@@ -233,6 +525,10 @@
   "Validate an IFC exchange document against a normalized IDS document."
   [ifc-document ids-document]
   (let [spatial (spatial-index (:ifc/project ifc-document))
+        objects (validation-objects ifc-document)
+        spatial (assoc spatial
+                       ::relations (relation-index (:ifc/raw-entities ifc-document)))
+        spatial (into spatial (map (juxt :id identity)) objects)
         specifications
         (mapv #(specification-result ifc-document spatial %)
               (:ids/specifications ids-document))

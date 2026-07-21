@@ -49,7 +49,7 @@
 (def numeric-facets
   {"minInclusive" :min-inclusive "maxInclusive" :max-inclusive
    "minExclusive" :min-exclusive "maxExclusive" :max-exclusive
-   "minLength" :min-length "maxLength" :max-length})
+   "minLength" :min-length "maxLength" :max-length "length" :length})
 
 (defn- parse-number [value]
   (when value

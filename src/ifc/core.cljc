@@ -605,6 +605,42 @@
         material-definition!
         (fn material-definition! [assignment]
           (case (:kind assignment)
+            :list
+            (emit! :ifcmateriallist
+                   (list* (mapv material-definition! (:materials assignment))))
+
+            :constituent-set
+            (let [constituents
+                  (mapv (fn [constituent]
+                          (emit! :ifcmaterialconstituent
+                                 (or (:name constituent) :$)
+                                 (or (:description constituent) :$)
+                                 (material-definition! (:material constituent))
+                                 (or (:fraction constituent) :$)
+                                 (or (:category constituent) :$)))
+                        (:constituents assignment))]
+              (emit! :ifcmaterialconstituentset
+                     (or (:name assignment) :$)
+                     (or (:description assignment) :$)
+                     (list* constituents)))
+
+            :profile-set
+            (let [profiles
+                  (mapv (fn [profile]
+                          (emit! :ifcmaterialprofile
+                                 (or (:name profile) :$)
+                                 (or (:description profile) :$)
+                                 (material-definition! (:material profile))
+                                 (if-let [profile-ref (:profile-ref profile)]
+                                   [:ref profile-ref] :$)
+                                 (or (:priority profile) :$)
+                                 (or (:category profile) :$)))
+                        (:profiles assignment))]
+              (emit! :ifcmaterialprofileset
+                     (or (:name assignment) :$)
+                     (or (:description assignment) :$)
+                     (list* profiles) :$))
+
             :layer-set
             (let [layers
                   (mapv (fn [layer]
@@ -1701,7 +1737,35 @@
         (assoc base :kind :list :values (mapv typed-value values)
                :value-type (typed-value-type (first values))
                :unit (unit table (get-in entity [:args 3]))))
+
+      :ifcpropertytablevalue
+      (let [defining (list-values (get-in entity [:args 2]))
+            defined (list-values (get-in entity [:args 3]))
+            sample (or (first defined) (first defining))]
+        (assoc base :kind :table
+               :defining-values (mapv typed-value defining)
+               :defined-values (mapv typed-value defined)
+               :values (mapv typed-value (concat defining defined))
+               :value-type (typed-value-type sample)
+               :typed-values
+               (mapv (fn [value] {:value (typed-value value)
+                                  :value-type (typed-value-type value)})
+                     (concat defining defined))
+               :defining-unit (unit table (get-in entity [:args 4]))
+               :defined-unit (unit table (get-in entity [:args 5]))))
       nil)))
+
+(defn- predefined-property-set [entity]
+  (case (:type entity)
+    :ifcdoorpanelproperties
+    {:id (:id entity) :global-id (get-in entity [:args 0])
+     :name (get-in entity [:args 2])
+     :properties
+     {"PanelOperation"
+      {:name "PanelOperation" :kind :predefined
+       :value (get-in entity [:args 5])
+       :value-type :ifcdoorpaneloperationenum}}}
+    nil))
 
 (defn- property-sets [table entities]
   (let [sets (into {}
@@ -1717,7 +1781,9 @@
                                   (list-values (get-in entity [:args 4])))}])
                         (filter #(= :ifcpropertyset (:type %)) entities)))]
     (reduce (fn [by-object relation]
-              (let [pset (get sets (ref-id (get-in relation [:args 5])))]
+              (let [definition (referenced table (get-in relation [:args 5]))
+                    pset (or (get sets (:id definition))
+                             (predefined-property-set definition))]
                 (if (and pset (:name pset))
                   (reduce #(assoc-in %1 [(ref-id %2) (:name pset)] pset)
                           by-object (list-values (get-in relation [:args 4])))
@@ -1771,6 +1837,38 @@
       {:kind :material :name (get-in entity [:args 0])
        :description (get-in entity [:args 1]) :category (get-in entity [:args 2])}
 
+      :ifcmateriallist
+      {:kind :list
+       :materials (mapv #(material-definition table %)
+                        (list-values (get-in entity [:args 0])))}
+
+      :ifcmaterialconstituentset
+      {:kind :constituent-set :name (get-in entity [:args 0])
+       :description (get-in entity [:args 1])
+       :constituents
+       (mapv (fn [ref]
+               (let [constituent (referenced table ref)]
+                 {:name (get-in constituent [:args 0])
+                  :description (get-in constituent [:args 1])
+                  :material (material-definition table (get-in constituent [:args 2]))
+                  :fraction (get-in constituent [:args 3])
+                  :category (get-in constituent [:args 4])}))
+             (list-values (get-in entity [:args 2])))}
+
+      :ifcmaterialprofileset
+      {:kind :profile-set :name (get-in entity [:args 0])
+       :description (get-in entity [:args 1])
+       :profiles
+       (mapv (fn [ref]
+               (let [profile (referenced table ref)]
+                 {:name (get-in profile [:args 0])
+                  :description (get-in profile [:args 1])
+                  :material (material-definition table (get-in profile [:args 2]))
+                  :profile-ref (ref-id (get-in profile [:args 3]))
+                  :priority (get-in profile [:args 4])
+                  :category (get-in profile [:args 5])}))
+             (list-values (get-in entity [:args 2])))}
+
       :ifcmateriallayerset
       {:kind :layer-set :name (get-in entity [:args 1])
        :description (get-in entity [:args 2])
@@ -1815,21 +1913,43 @@
 (defn- classification-reference [table ref]
   (when-let [entity (referenced table ref)]
     (when (= :ifcclassificationreference (:type entity))
-      {:location (get-in entity [:args 0])
-       :identification (get-in entity [:args 1])
-       :name (get-in entity [:args 2])
-       :source (classification-source table (get-in entity [:args 3]))
-       :description (get-in entity [:args 4])
-       :sort (get-in entity [:args 5])})))
+      (let [parent-ref (get-in entity [:args 3])
+            parent (classification-reference table parent-ref)
+            source (or (:source parent) (classification-source table parent-ref))
+            identification (get-in entity [:args 1])]
+        {:location (get-in entity [:args 0])
+         :identification identification
+         :identification-path (conj (vec (:identification-path parent)) identification)
+         :name (get-in entity [:args 2])
+         :source source
+         :description (get-in entity [:args 4])
+         :sort (get-in entity [:args 5])}))))
+
+(defn- classification-assignment [table ref]
+  (let [entity (referenced table ref)]
+    (case (:type entity)
+      :ifcclassificationreference (classification-reference table ref)
+      :ifcclassification {:source (classification-source table ref)
+                          :identification nil :identification-path []}
+      nil)))
 
 (defn- classifications-by-object [table entities]
-  (reduce (fn [by-object relation]
-            (if-let [classification
-                     (classification-reference table (get-in relation [:args 5]))]
-              (reduce #(update %1 (ref-id %2) (fnil conj []) classification)
-                      by-object (list-values (get-in relation [:args 4])))
-              by-object))
-          {} (filter #(= :ifcrelassociatesclassification (:type %)) entities)))
+  (reduce
+   (fn [by-object relation]
+     (let [[classification-ref objects]
+           (case (:type relation)
+             :ifcrelassociatesclassification
+             [(get-in relation [:args 5]) (list-values (get-in relation [:args 4]))]
+             :ifcexternalreferencerelationship
+             [(get-in relation [:args 2]) (list-values (get-in relation [:args 3]))]
+             nil)
+           classification (classification-assignment table classification-ref)]
+       (if classification
+         (reduce #(update %1 (ref-id %2) (fnil conj []) classification)
+                 by-object objects)
+         by-object)))
+   {} (filter #(#{:ifcrelassociatesclassification
+                  :ifcexternalreferencerelationship} (:type %)) entities)))
 
 (defn- opening-relations [entities]
   {:voids (into {} (map (fn [relation]
@@ -2070,6 +2190,7 @@
          :ifc/elements products
          :ifc/groups (groups table entities)
          :ifc/connections (port-connections table entities (:by-id port-data))
+         :ifc/classifications-by-object classifications
          :ifc/source :external-spf
          :ifc/raw-spf text
          :ifc/raw-entities entities

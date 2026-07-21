@@ -1,13 +1,15 @@
 {:paths ["src"]
  :deps {io.github.kotoba-lang/org-iso-10303
         {:git/url "https://github.com/kotoba-lang/org-iso-10303.git"
-         :git/sha "50bd6c235ea0f6dad600a75745d7c807dab98884"}}
+         :git/sha "1653379c5ca5dfea5f157ac00a4c49cd570a0743"}}
  :aliases {:test {:extra-paths ["test"]
                   :extra-deps {io.github.cognitect-labs/test-runner
                                {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
                   :main-opts ["-m" "cognitect.test-runner"]}
            :lint {:replace-deps {clj-kondo/clj-kondo {:mvn/version "2024.11.14"}}
-                  :main-opts ["-m" "clj-kondo.main" "--lint" "src" "test"
+                  :main-opts ["-m" "clj-kondo.main" "--lint" "src" "test" "dev"
                               "--fail-level" "error"]}
            :external-corpus {:extra-paths ["dev"]
-                             :main-opts ["-m" "ifc.corpus-runner"]}}}
+                             :main-opts ["-m" "ifc.corpus-runner"]}
+           :ids-corpus {:extra-paths ["dev"]
+                        :main-opts ["-m" "ifc.ids-corpus-runner"]}}}

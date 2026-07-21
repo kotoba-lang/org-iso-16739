@@ -60,3 +60,14 @@ GlobalId and every failed requirement for BCF/editor issue generation.
 On the JVM, `ifc.ids.xml/read-xml` and `write-xml` provide IDS 1.0 XML transport.
 The reader disables DTDs and external entities. The validation engine remains
 CLJC so browser, desktop, cloud, and CI use the same deterministic gate.
+
+The validator passes all 287 paired pass/fail cases in the official
+buildingSMART IDS 1.0 implementer corpus at commit
+`4949bfcba2cd324f76b480f6f85e0b25dc7fa98f`. Run the reproducible gate with:
+
+```sh
+clojure -M:ids-corpus -- /path/to/IDS/Documentation/ImplementersDocumentation/TestCases
+```
+
+The command fails if the corpus does not contain exactly 287 paired cases or
+if any expected pass/fail result differs.
