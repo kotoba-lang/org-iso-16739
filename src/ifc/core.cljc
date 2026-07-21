@@ -1157,6 +1157,72 @@
             (reduce-kv (fn [result index value] (assoc result index value))
                        (vec args) replacements))))
 
+(def ^:private imported-semantic-keys
+  [:ifc/project :ifc/units :ifc/georeference :ifc/elements :ifc/groups
+   :ifc/connections :ifc/structural-analysis :ifc/classifications-by-object])
+
+(defn- without-authored-names [value]
+  (walk/postwalk #(if (map? %) (dissoc % :name) %) value))
+
+(defn- global-name-index [document]
+  (let [result (atom {})]
+    (walk/postwalk (fn [value]
+                     (when (and (map? value) (string? (:global-id value))
+                                (contains? value :name))
+                       (swap! result assoc (:global-id value) (:name value)))
+                     value)
+                   (select-keys document imported-semantic-keys))
+    @result))
+
+(defn- name-only-external-edit? [document]
+  (when-let [imported (:ifc/import-semantics document)]
+    (= (without-authored-names imported)
+       (without-authored-names (select-keys document imported-semantic-keys)))))
+
+(defn- entity-body-end [text start]
+  (loop [index start depth 1 quoted? false]
+    (when (< index (count text))
+      (let [character (nth text index)
+            next-character (when (< (inc index) (count text)) (nth text (inc index)))]
+        (cond
+          (and quoted? (= character \') (= next-character \'))
+          (recur (+ index 2) depth quoted?)
+          (= character \') (recur (inc index) depth (not quoted?))
+          quoted? (recur (inc index) depth quoted?)
+          (= character \() (recur (inc index) (inc depth) quoted?)
+          (= character \)) (if (= depth 1) index
+                                (recur (inc index) (dec depth) quoted?))
+          :else (recur (inc index) depth quoted?))))))
+
+(defn- patch-entity-name [text id name]
+  (let [matcher (re-pattern (str "(?i)#" id "\\s*=\\s*[A-Z0-9_]+\\s*\\("))]
+    (if-let [prefix (re-find matcher text)]
+      (let [match-start (string/index-of text prefix)
+            body-start (+ match-start (count prefix))
+            body-end (entity-body-end text body-start)
+            args (when body-end
+                   (part21/split-top-level (subs text body-start body-end)))]
+        (if (and body-end (> (count args) 2))
+          (str (subs text 0 body-start)
+               (string/join "," (assoc (vec args) 2 (part21/value name)))
+               (subs text body-end))
+          text))
+      text)))
+
+(defn- patch-root-names-in-spf [document]
+  (let [before (global-name-index (:ifc/import-semantics document))
+        after (global-name-index document)
+        raw-id-by-global (into {} (keep (fn [{:keys [id args]}]
+                                          (when (string? (first args))
+                                            [(first args) id])))
+                               (:ifc/raw-entities document))]
+    (reduce-kv (fn [text global-id name]
+                 (if (and (not= name (get before global-id))
+                          (contains? raw-id-by-global global-id))
+                   (patch-entity-name text (get raw-id-by-global global-id) name)
+                   text))
+               (:ifc/raw-spf document) after)))
+
 (defn- hybrid-entities
   "Retain vendor entities while reconciling edited, added, removed, and retyped
   products against a regenerated semantic graph."
@@ -1312,6 +1378,8 @@
                       {:schema target-schema :supported supported-schemas})))
     (if unchanged-external?
       (:ifc/raw-spf document)
+      (if (and (:ifc/raw-spf document) (name-only-external-edit? document))
+        (patch-root-names-in-spf document)
       (apply part21/file {:description (if-let [profile (:ifc/model-view document)]
                                          (mvd/header-description target-schema profile)
                                          (or (first (get-in document [:ifc/header :description]))
@@ -1320,7 +1388,7 @@
                           :author "KAMI" :org "kotoba-lang"}
              (if (seq (:ifc/raw-entities document))
                (hybrid-entities document)
-               (standard-entities document))))))
+               (standard-entities document)))))))
 
 (defn rewrite-spf
   "Force standard-entity regeneration while retaining the imported schema."
@@ -2596,7 +2664,9 @@
          :ifc/raw-entities entities
          :ifc/raw-entity-count (count entities)
          :ifc/raw-type-frequencies (frequencies (map :type entities))}]
-    (assoc document :ifc/import-fingerprint (semantic-fingerprint document))))
+    (assoc document
+           :ifc/import-semantics (select-keys document imported-semantic-keys)
+           :ifc/import-fingerprint (semantic-fingerprint document))))
 
 (defn read-document [text]
   (try

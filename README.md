@@ -50,6 +50,9 @@ entity graph. An unchanged document is returned byte-for-byte. When a modeled
 project or product is edited, hybrid export keeps the original vendor and
 unsupported entities, appends regenerated placement/representation dependency
 graphs, and redirects the original GlobalId-bearing entity to the new geometry.
+For name-only edits, the writer patches only the matching `IfcRoot.Name` token
+in the original SPF. All other STEP lexemes remain byte-identical, including
+integer-valued IFC2X3 attributes that must not be normalized to reals.
 `rewrite-spf` remains available when a deliberately clean standard-only export
 is required.
 
@@ -93,6 +96,9 @@ responsibility of the independent external validator gate.
 `clojure -M:external-validator` generates a representative IFC4.3 exchange and
 validates it together with the pinned official fixtures using IfcOpenShell
 0.8.5 syntax, schema, and EXPRESS WHERE-rule checks. The runner uses an
-isolated `uv` environment and exits non-zero for any schema error. This gate is
+isolated `uv` environment and exits non-zero for any schema error. It also
+validates name-edited baseline/candidate pairs for every pinned remote corpus
+file and rejects any newly introduced violation while tolerating only the
+baseline file's pre-existing error multiset. This gate is
 separate from IDS: schema conformance is checked first, then project-specific
 information requirements are evaluated by IDS.
