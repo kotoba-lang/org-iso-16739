@@ -18,7 +18,19 @@
    :source/path "IFC 4.0.2.1 (IFC 4)/ISO Spec - ReferenceView_V1.2/wall-with-opening-and-window.ifc"
    :expected/schema "IFC4" :expected/products 2}]
  :remote-fixtures
- [{:name "PCERT Architecture IFC4.3"
+ [{:name "PCERT Architecture IFC4"
+   :source/path "IFC 4.0.2.1 (IFC 4)/PCERT-Sample-Scene/Building-Architecture.ifc"
+   :sha256 "3ff9b10bd00c7b96dded51e7ca5a6b69efbea38b049adcdd05fcd247de7e70d5"
+   :expected/schema "IFC4" :expected/products 13}
+  {:name "PCERT HVAC IFC4"
+   :source/path "IFC 4.0.2.1 (IFC 4)/PCERT-Sample-Scene/Building-Hvac.ifc"
+   :sha256 "11a8552bc555fa44dfdc49374d1ab2da0a16104c10f086af509f500ce03fa2b3"
+   :expected/schema "IFC4" :expected/products 5}
+  {:name "PCERT Structural IFC4"
+   :source/path "IFC 4.0.2.1 (IFC 4)/PCERT-Sample-Scene/Building-Structural.ifc"
+   :sha256 "68be722391e7aaa53bb9278645a02aa4b6382f13cc07548a1612e9b1dc3def67"
+   :expected/schema "IFC4" :expected/products 15}
+  {:name "PCERT Architecture IFC4.3"
    :source/path "IFC 4.3.2.0 (IFC4X3_ADD2)/PCERT-Sample-Scene/Building-Architecture.ifc"
    :sha256 "a42962f9e2068040ac96636b1e7f6117150b6c0e3371f81088721b22796e463f"
    :expected/schema "IFC4X3_ADD2" :expected/products 12}
@@ -29,4 +41,34 @@
   {:name "PCERT Structural IFC4.3"
    :source/path "IFC 4.3.2.0 (IFC4X3_ADD2)/PCERT-Sample-Scene/Building-Structural.ifc"
    :sha256 "0343d5222d38e6be8ac7c31045c692e62c6018c80ea60d2f6023e73b846247ab"
-   :expected/schema "IFC4X3_ADD2" :expected/products 15}]}
+   :expected/schema "IFC4X3_ADD2" :expected/products 15}
+  {:name "Revit 2011 Wall 1 IFC2x3"
+   :source/raw-base "https://raw.githubusercontent.com/IfcOpenShell/files/"
+   :source/commit "9fc2267d7f1ff35284c5b0fc28cc97bff7ace8e7"
+   :source/path "revit2011_wall1.ifc"
+   :sha256 "34af07aa1618e283c2ddc2f963455fe77ec1c7e3287e29f2a14110abd1f4e195"
+   :expected/schema "IFC2X3" :expected/products 1}
+  {:name "Revit 2011 Wall 2 IFC2x3"
+   :source/raw-base "https://raw.githubusercontent.com/IfcOpenShell/files/"
+   :source/commit "9fc2267d7f1ff35284c5b0fc28cc97bff7ace8e7"
+   :source/path "revit2011_wall2.ifc"
+   :sha256 "20093673b8ec9ecca3a1c0fe8bc7b56b3ad33089839bd31659eac50d6f3eb2f9"
+   :expected/schema "IFC2X3" :expected/products 1}
+  {:name "Revit 2014 Multiple Bounded Half Spaces IFC2x3"
+   :source/raw-base "https://raw.githubusercontent.com/IfcOpenShell/files/"
+   :source/commit "9fc2267d7f1ff35284c5b0fc28cc97bff7ace8e7"
+   :source/path "revit2014_multiple_bounded_halfspaces.ifc"
+   :sha256 "3c58bcfea1c99df7e408fe0ab41fa46374401092ec02bab6e2355556b18ddeea"
+   :expected/schema "IFC2X3" :expected/products 1}
+  {:name "IfcOpenShell Large Offset IFC4"
+   :source/raw-base "https://raw.githubusercontent.com/IfcOpenShell/files/"
+   :source/commit "9fc2267d7f1ff35284c5b0fc28cc97bff7ace8e7"
+   :source/path "large_offset.ifc"
+   :sha256 "b9654fb01fb3177e9b1a9d67755dce57a766e6bb80788b78331ec40587e75a9e"
+   :expected/schema "IFC4" :expected/products 8}
+  {:name "IfcOpenShell Mapped Shape Transformation IFC4"
+   :source/raw-base "https://raw.githubusercontent.com/IfcOpenShell/files/"
+   :source/commit "9fc2267d7f1ff35284c5b0fc28cc97bff7ace8e7"
+   :source/path "mapped_shape_transformation.ifc"
+   :sha256 "002a93f26c360c39f251778bab2728f96152c58dd773efb8ffea0881a201b265"
+   :expected/schema "IFC4" :expected/products 1}]}

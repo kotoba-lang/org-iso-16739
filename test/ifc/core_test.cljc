@@ -996,3 +996,52 @@
         imported (ifc/read-document (ifc/write-spf document))]
     (is (= ["living-space"] (get-in imported [:ifc/groups 0 :member-global-ids])))
     (is (:roundtrip/lossless? (ifc/roundtrip-report (ifc/write-spf document))))))
+
+(deftest preserves-legacy-standard-case-and-mapped-profile-collections
+  (let [legacy (assoc (ifc/exchange-document
+                       {:project {:id 1 :global-id "p" :name "Legacy" :children []}
+                        :elements [{:id 2 :global-id "wall" :kind :wall
+                                    :ifc/entity-type :ifcwallstandardcase
+                                    :name "Legacy Wall"}]})
+                      :ifc/schema "IFC2X3")
+        profile {:kind :arbitrary-with-voids :profile-type :area :name "Frame"
+                 :outer-curve {:kind :polyline
+                               :points [[0 0] [4 0] [4 3] [0 3] [0 0]]}
+                 :inner-curves [{:kind :polyline
+                                 :points [[1 1] [3 1] [3 2] [1 2] [1 1]]}]}
+        mapped {:kind :mapped-item
+                :mapping-origin {:location [0 0 0]}
+                :transform {:axis1 [1 0 0] :axis2 [0 1 0] :axis3 [0 0 1]
+                            :origin [1000000 2000000 0] :scale 1.0}
+                :source {:kind :collection
+                         :items [{:kind :extruded-area-solid :profile profile
+                                  :position {:location [0 0 0]}
+                                  :direction [0 0 1] :depth 0.2}
+                                 {:kind :extruded-area-solid
+                                  :profile {:kind :arbitrary-closed :name "Composite"
+                                            :curve {:kind :composite-curve
+                                                    :self-intersect false
+                                                    :segments
+                                                    [{:transition :continuous :same-sense true
+                                                      :parent-curve {:kind :polyline
+                                                                     :points [[0 0] [1 0] [1 1]
+                                                                              [0 0]]}}]}}
+                                  :position {:location [0 0 1]}
+                                  :direction [0 0 1] :depth 0.1}]}}
+        geometry-document
+        (ifc/exchange-document
+         {:project {:id 10 :global-id "geometry-project" :name "Geometry"
+                    :children []}
+          :elements [{:id 11 :global-id "mapped-product" :kind :proxy
+                      :name "Mapped Collection" :geometry mapped}]})
+        legacy-output (ifc/rewrite-spf legacy)
+        geometry-output (ifc/rewrite-spf geometry-document)
+        geometry-import (ifc/read-document geometry-output)]
+    (is (string/includes? legacy-output "IFCWALLSTANDARDCASE"))
+    (is (= :ifcwallstandardcase
+           (get-in (ifc/read-document legacy-output) [:ifc/elements 0 :ifc/entity-type])))
+    (is (string/includes? geometry-output "IFCARBITRARYPROFILEDEFWITHVOIDS"))
+    (is (string/includes? geometry-output "IFCCOMPOSITECURVE"))
+    (is (= 2 (count (get-in geometry-import [:ifc/elements 0 :geometry :source :items]))))
+    (is (:roundtrip/lossless? (ifc/roundtrip-report legacy-output)))
+    (is (:roundtrip/lossless? (ifc/roundtrip-report geometry-output)))))
