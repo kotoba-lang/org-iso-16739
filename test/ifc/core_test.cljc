@@ -669,6 +669,22 @@
     (is (= 1.0002 (get-in imported [:ifc/georeference :factor-z])))
     (is (:roundtrip/lossless? (ifc/roundtrip-report output)))))
 
+(deftest map-conversion-transforms-model-coordinates-and-inverts-scaled-axes
+  (let [georeference {:world-origin [10.0 20.0 30.0]
+                      :eastings 1000.0 :northings 2000.0 :orthogonal-height 50.0
+                      :x-axis-abscissa 0.0 :x-axis-ordinate 1.0 :scale 2.0
+                      :factor-x 1.5 :factor-y 0.5 :factor-z 2.0}
+        model [1.0 2.0 3.0]
+        engineering [11.0 22.0 33.0]
+        mapped [978.0 2033.0 182.0]]
+    (is (= mapped (ifc/engineering-to-map-coordinate georeference engineering)))
+    (is (= mapped (ifc/model-to-map-coordinate georeference model)))
+    (is (= engineering (ifc/map-to-engineering-coordinate georeference mapped)))
+    (is (= model (ifc/map-to-model-coordinate georeference mapped)))
+    (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+                 (ifc/map-to-engineering-coordinate
+                  (assoc georeference :factor-y 0.0) mapped)))))
+
 (deftest conversion-based-length-and-crs-map-units-roundtrip-semantically
   (let [foot {:kind :conversion-based :type :lengthunit :name "FOOT"
               :dimensions [1 0 0 0 0 0 0]

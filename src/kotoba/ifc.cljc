@@ -11,3 +11,7 @@
 (def roundtrip-report impl/roundtrip-report)
 (def corpus-report impl/corpus-report)
 (def read-spf impl/read-spf)
+(def engineering-to-map-coordinate impl/engineering-to-map-coordinate)
+(def map-to-engineering-coordinate impl/map-to-engineering-coordinate)
+(def model-to-map-coordinate impl/model-to-map-coordinate)
+(def map-to-model-coordinate impl/map-to-model-coordinate)

@@ -11,6 +11,57 @@
 (def contract-version 1)
 (def supported-schemas #{"IFC2X3" "IFC4" "IFC4X3" "IFC4X3_ADD2"})
 
+(defn engineering-to-map-coordinate
+  "Apply IFC map conversion to an engineering-CRS coordinate. Supports the
+  anisotropic axis factors added by IfcMapConversionScaled."
+  [georeference coordinate]
+  (let [[x y z] (take 3 (concat coordinate (repeat 0.0)))
+        a (double (or (:x-axis-abscissa georeference) 1.0))
+        b (double (or (:x-axis-ordinate georeference) 0.0))
+        scale (double (or (:scale georeference) 1.0))
+        sx (* scale (double (or (:factor-x georeference) 1.0)))
+        sy (* scale (double (or (:factor-y georeference) 1.0)))
+        sz (* scale (double (or (:factor-z georeference) 1.0)))]
+    [(+ (double (or (:eastings georeference) 0.0)) (* sx x a) (- (* sy y b)))
+     (+ (double (or (:northings georeference) 0.0)) (* sx x b) (* sy y a))
+     (+ (double (or (:orthogonal-height georeference) 0.0)) (* sz z))]))
+
+(defn map-to-engineering-coordinate
+  "Invert IFC map conversion. Throws when its horizontal or vertical scale is
+  singular instead of returning an invalid coordinate."
+  [georeference coordinate]
+  (let [[east north height] (take 3 (concat coordinate (repeat 0.0)))
+        a (double (or (:x-axis-abscissa georeference) 1.0))
+        b (double (or (:x-axis-ordinate georeference) 0.0))
+        norm (+ (* a a) (* b b))
+        scale (double (or (:scale georeference) 1.0))
+        sx (* scale (double (or (:factor-x georeference) 1.0)))
+        sy (* scale (double (or (:factor-y georeference) 1.0)))
+        sz (* scale (double (or (:factor-z georeference) 1.0)))
+        u (- east (double (or (:eastings georeference) 0.0)))
+        v (- north (double (or (:northings georeference) 0.0)))]
+    (when (or (zero? norm) (zero? sx) (zero? sy) (zero? sz))
+      (throw (ex-info "IFC map conversion is singular"
+                      {:axis [a b] :scale [sx sy sz]})))
+    [(/ (+ (* a u) (* b v)) (* sx norm))
+     (/ (+ (* (- b) u) (* a v)) (* sy norm))
+     (/ (- height (double (or (:orthogonal-height georeference) 0.0))) sz)]))
+
+(defn model-to-map-coordinate
+  "Convert a model coordinate through the geometric-context world origin and
+  then through IFC map conversion."
+  [georeference coordinate]
+  (engineering-to-map-coordinate
+   georeference
+   (mapv + (vec (take 3 (concat coordinate (repeat 0.0))))
+         (vec (take 3 (concat (:world-origin georeference) (repeat 0.0)))))))
+
+(defn map-to-model-coordinate
+  "Inverse of `model-to-map-coordinate`."
+  [georeference coordinate]
+  (mapv - (map-to-engineering-coordinate georeference coordinate)
+        (vec (take 3 (concat (:world-origin georeference) (repeat 0.0))))))
+
 (declare semantic-fingerprint product-types ref-id)
 
 (def entity-types
