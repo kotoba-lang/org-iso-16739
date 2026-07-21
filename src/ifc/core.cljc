@@ -214,6 +214,7 @@
 
                   (throw (ex-info "unsupported IFC unit" {:unit unit}))))
         list* (fn [values] (into [:list] values))
+        representation-context (atom :$)
         logical (fn [value] (if (#{:$ :* :u :unknown} value) value (boolean value)))
         logical-true (fn [value] (if (nil? value) true (logical value)))
         point! (fn [coordinates] (emit! :ifccartesianpoint (list* coordinates)))
@@ -479,7 +480,8 @@
                                            (vec (keep geometry! (:items source)))
                                            (some-> (geometry! source) vector))
                             source-shape (emit! :ifcshaperepresentation
-                                                :$ "Body" "Body" (list* source-items))
+                                                @representation-context "Body" "Body"
+                                                (list* source-items))
                             representation-map (emit! :ifcrepresentationmap
                                                       (axis! (:mapping-origin geometry))
                                                       source-shape)
@@ -531,7 +533,9 @@
                                        (some-> (geometry! geometry) vector))]
                            (when (seq items)
                              (presentation! items element)
-                             (let [shape (emit! :ifcshaperepresentation :$ "Body" "Body" (list* items))]
+                             (let [shape (emit! :ifcshaperepresentation
+                                                @representation-context "Body" "Body"
+                                                (list* items))]
                                (emit! :ifcproductdefinitionshape :$ :$ (list* [shape]))))))
         container-refs (atom {})
         spatial! (fn spatial! [node]
@@ -769,7 +773,7 @@
                                       items (if (= :collection (:kind geometry))
                                               (vec (keep geometry! (:items geometry)))
                                               (some-> (geometry! geometry) vector))
-                                      shape (emit! :ifcshaperepresentation :$
+                                      shape (emit! :ifcshaperepresentation @representation-context
                                                    (or (:identifier representation-map) "Body")
                                                    (or (:representation-type representation-map)
                                                        "Body")
@@ -807,6 +811,7 @@
         true-north (when-let [direction (:true-north georeference)] (direction! direction))
         context (emit! :ifcgeometricrepresentationcontext :$ "Model" 3 1.0e-5
                        world-axis (or true-north :$))
+        _representation-context (reset! representation-context context)
         projected-crs (when georeference
                         (let [crs (:projected-crs georeference)]
                           (emit! :ifcprojectedcrs (or (:name crs) "Undefined CRS")
@@ -1223,6 +1228,18 @@
                    text))
                (:ifc/raw-spf document) after)))
 
+(def ^:private inverse-required-types
+  #{:ifcproductdefinitionshape :ifcshaperepresentation
+    :ifcpropertyset :ifcelementquantity :ifcmateriallayersetusage})
+
+(defn- prune-inverse-orphans [entities]
+  (loop [current (vec entities)]
+    (let [referenced-ids (into #{} (mapcat entity-refs) current)
+          retained (vec (remove #(and (contains? inverse-required-types (:type %))
+                                      (not (contains? referenced-ids (:id %))))
+                                current))]
+      (if (= (count retained) (count current)) retained (recur retained)))))
+
 (defn- hybrid-entities
   "Retain vendor entities while reconciling edited, added, removed, and retyped
   products against a regenerated semantic graph."
@@ -1364,9 +1381,9 @@
         patched (->> raw
                      (remove #(or (contains? deleted-ids (:id %))
                                   (removed-relationship? %)))
-                     (mapv #(get replacement-by-raw-id (:id %) %)))]
-    (mapv (fn [{:keys [id type args]}] (into [id type] args))
-          (concat patched appended))))
+                     (mapv #(get replacement-by-raw-id (:id %) %)))
+        reconciled (prune-inverse-orphans (concat patched appended))]
+    (mapv (fn [{:keys [id type args]}] (into [id type] args)) reconciled)))
 
 (defn write-spf [document]
   (let [target-schema (or (:ifc/schema document) schema)

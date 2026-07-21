@@ -163,9 +163,9 @@
     (is (= :external-spf (:ifc/source imported)))
     (is (= "Standard Tower" (get-in imported [:ifc/project :name])))
     (is (= "Tokyo Site" (get-in imported [:ifc/project :children 0 :name])))
-    (is (= [35.0 40.0 0.0 0.0]
+    (is (= [35 40 0 0]
            (get-in imported [:ifc/project :children 0 :latitude])))
-    (is (= [139.0 45.0 0.0 0.0]
+    (is (= [139 45 0 0]
            (get-in imported [:ifc/project :children 0 :longitude])))
     (is (= 42.5 (get-in imported [:ifc/project :children 0 :elevation])))
     (is (= "EPSG:6677" (get-in imported [:ifc/georeference :projected-crs :name])))
@@ -784,7 +784,7 @@
     (is (string/includes? output "IFCDERIVEDUNIT"))
     (is (string/includes? output "IFCMONETARYUNIT"))
     (is (string/includes? output "IFCCONTEXTDEPENDENTUNIT"))
-    (is (= [1.0 -1.0] (mapv :exponent
+    (is (= [1 -1] (mapv :exponent
                              (get-in imported [:ifc/units :linearvelocityunit :elements]))))
     (is (= :second (get-in imported [:ifc/units :linearvelocityunit
                                      :elements 1 :unit :name])))
@@ -897,6 +897,19 @@
        (is (> (:ifc/raw-entity-count reimported) (:ifc/raw-entity-count document))))
      :cljs (is true)))
 
+(deftest official-wall-geometry-edit-is-semantically-lossless
+  #?(:clj
+     (let [text (slurp (io/file "test/fixtures/external/buildingSMART-wall-opening-window.ifc"))
+           report (ifc/hybrid-roundtrip-report
+                   text #(assoc-in % [:ifc/elements 0 :geometry :depth] 2100.0))]
+       (is (:roundtrip/semantic-lossless? report))
+       (is (:roundtrip/opaque-lossless? report))
+       (is (= 2100.0
+              (->> (get-in report [:roundtrip/actual :ifc/elements])
+                   (filter #(= "3ZYW59sxj8lei475l7EhLU" (:global-id %)))
+                   first :geometry :depth))))
+     :cljs (is true)))
+
 (deftest hybrid-corpus-report-proves-semantic-and-opaque-entity-preservation
   #?(:clj
      (let [fixture (slurp (io/file "test/fixtures/revit-wall.ifc"))
@@ -970,7 +983,7 @@
         by-global (into {} (map (juxt :global-id identity) (:ifc/elements reimported)))]
     (is (= :column (get-in by-global ["retained-product" :kind])))
     (is (= :beam (get-in by-global ["added-product" :kind])))
-    (is (= [1.0 2.0 3.0] (get-in by-global ["added-product" :placement :location])))
+    (is (= [1 2 3] (get-in by-global ["added-product" :placement :location])))
     (is (= 4.0 (get-in by-global ["added-product" :geometry :depth])))
     (is (nil? (get by-global "deleted-product")))
     (is (string/includes? output "'Keep Graph Data'"))))

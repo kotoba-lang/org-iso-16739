@@ -71,24 +71,31 @@
     (when-not (zero? status)
       (throw (ex-info "IfcOpenShell validation failed" {:exit status})))))
 
+(defn- validation-pair [text edit]
+  (let [baseline (Files/createTempFile "kotoba-ifc-input-" ".ifc"
+                                       (make-array FileAttribute 0))
+        candidate (Files/createTempFile "kotoba-ifc-hybrid-" ".ifc"
+                                        (make-array FileAttribute 0))
+        report (ifc/hybrid-roundtrip-report text edit)]
+    (spit (.toFile baseline) text)
+    (spit (.toFile candidate) (:roundtrip/output report))
+    [baseline candidate]))
+
 (defn -main [& _]
   (let [path (Files/createTempFile "kotoba-ifc-validation-" ".ifc"
                                    (make-array FileAttribute 0))
         manifest (edn/read-string (slurp corpus/manifest-path))
-        pairs
+        name-pairs
         (mapv (fn [fixture]
-                (let [{:keys [text]} (corpus/fetch-fixture manifest fixture)
-                      baseline (Files/createTempFile "kotoba-ifc-input-" ".ifc"
-                                                     (make-array FileAttribute 0))
-                      candidate (Files/createTempFile "kotoba-ifc-hybrid-" ".ifc"
-                                                      (make-array FileAttribute 0))
-                      report (ifc/hybrid-roundtrip-report
-                              text #(assoc-in % [:ifc/elements 0 :name]
-                                              (str "Validated edit — " (:name fixture))))]
-                  (spit (.toFile baseline) text)
-                  (spit (.toFile candidate) (:roundtrip/output report))
-                  [baseline candidate]))
-              (:remote-fixtures manifest))]
+                (let [{:keys [text]} (corpus/fetch-fixture manifest fixture)]
+                  (validation-pair
+                   text #(assoc-in % [:ifc/elements 0 :name]
+                                   (str "Validated edit — " (:name fixture))))))
+              (:remote-fixtures manifest))
+        geometry-text (slurp "test/fixtures/external/buildingSMART-wall-opening-window.ifc")
+        pairs (conj name-pairs
+                    (validation-pair geometry-text
+                                     #(update-in % [:ifc/elements 0 :geometry :depth] + 100.0)))]
     (try
       (spit (.toFile path) (ifc/write-spf generated-document))
       (run-validator! (conj official-fixtures (str path)))
