@@ -103,11 +103,12 @@ baseline file's pre-existing error multiset. A buildingSMART wall/opening/window
 fixture also undergoes a real solid-depth edit; its regenerated placement,
 representation, property, material, and inverse graph must remain schema-valid.
 The remote matrix additionally performs modeled geometry edits on 17 of 21
-files. Scalar swept-solid edits that can retain the source STEP graph are
-schema-native patches and are externally validated across IFC2X3/IFC4,
-including all three pinned Revit exports. Tessellation, mapped-item, and BREP
-edits remain semantic/opaque-lossless hybrid checks unless their regenerated
-graph also passes the independent schema gate; unsupported advanced-BREP, CSG,
+files. Swept-solid scalars, tessellated coordinate lists, mapped-item
+transformation origins, and faceted-BREP vertices are patched in their source
+STEP graph and externally validated across IFC2X3/IFC4/IFC4.3, including all
+three pinned Revit exports. A mapped transform whose origin point is shared
+with another object receives a private `IfcCartesianPoint`, preventing the edit
+from moving unrelated placements. Unsupported advanced-BREP, CSG,
 surface-model, and nested-mapping edits are reported explicitly rather than
 counted as covered.
 This gate is
