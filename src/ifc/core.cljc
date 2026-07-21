@@ -4,6 +4,7 @@
             [clojure.string :as string]
             [clojure.walk :as walk]
             [brep.spline :as spline]
+            [ifc.mvd :as mvd]
             [iso-10303.part21 :as part21]
             #?(:clj [clojure.edn :as edn] :cljs [cljs.reader :as edn])))
 
@@ -1107,7 +1108,10 @@
                       {:schema target-schema :supported supported-schemas})))
     (if unchanged-external?
       (:ifc/raw-spf document)
-      (apply part21/file {:description "ViewDefinition [DesignTransferView]"
+      (apply part21/file {:description (if-let [profile (:ifc/model-view document)]
+                                         (mvd/header-description target-schema profile)
+                                         (or (first (get-in document [:ifc/header :description]))
+                                             (mvd/header-description target-schema nil)))
                           :name "building.ifc" :schema target-schema
                           :author "KAMI" :org "kotoba-lang"}
              (if (seq (:ifc/raw-entities document))
@@ -2221,6 +2225,10 @@
                                            (get openings-by-host id))))))
         document
         {:ifc/schema (:part21/schema parsed) :ifc/contract-version contract-version
+         :ifc/model-view (mvd/detect-profile (:part21/file-description parsed))
+         :ifc/header {:description (:part21/file-description parsed)
+                      :implementation-level (:part21/implementation-level parsed)
+                      :file-name (:part21/file-name parsed)}
          :ifc/project (when project-entity (spatial-node table children (:id project-entity)))
          :ifc/units (project-units table project-entity)
          :ifc/georeference (georeference table entities)
@@ -2293,6 +2301,7 @@
                                      (get containers (:container-id element))))))
                        (:ifc/elements document))]
     {:ifc/schema (:ifc/schema document)
+     :ifc/model-view (:ifc/model-view document)
      :ifc/project (portable-semantic-value (:ifc/project document))
      :ifc/units (portable-semantic-value (:ifc/units document))
      :ifc/georeference (portable-semantic-value (:ifc/georeference document))
