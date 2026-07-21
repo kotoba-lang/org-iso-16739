@@ -25,6 +25,22 @@
    :footing :ifcfooting :pile :ifcpile :member :ifcmember :plate :ifcplate
    :opening :ifcopeningelement :proxy :ifcbuildingelementproxy})
 
+(def legacy-entity-kinds
+  "IFC2x3 and IFC4 standard-case product aliases accepted by the reader. The
+  writer continues to emit the canonical entity in `entity-types`."
+  {:ifcwallstandardcase :wall
+   :ifcslabstandardcase :slab
+   :ifccolumnstandardcase :column
+   :ifcbeamstandardcase :beam
+   :ifcmemberstandardcase :member
+   :ifcplatestandardcase :plate
+   :ifcdoorstandardcase :door
+   :ifcwindowstandardcase :window})
+
+(def entity-kind-by-type
+  (merge (into {} (map (fn [[kind type]] [type kind])) entity-types)
+         legacy-entity-kinds))
+
 (def type-entity-types
   {:wall :ifcwalltype :slab :ifcslabtype :column :ifccolumntype :beam :ifcbeamtype
    :door :ifcdoortype :window :ifcwindowtype :roof :ifcrooftype :stair :ifcstairtype
@@ -188,7 +204,14 @@
                      :arbitrary-closed
                      (emit! :ifcarbitraryclosedprofiledef :area
                             (or (:name profile) "Profile")
-                            (curve! {:kind :polyline :points (:points profile)}))
+                            (curve! (or (:curve profile)
+                                        {:kind :polyline :points (:points profile)})))
+                     :arbitrary-with-voids
+                     (emit! :ifcarbitraryprofiledefwithvoids
+                            (or (:profile-type profile) :area)
+                            (or (:name profile) "Profile")
+                            (curve! (:outer-curve profile))
+                            (list* (mapv curve! (:inner-curves profile))))
                      nil))
         loop! (fn [bound]
                 (if (seq (:edges bound))
@@ -337,9 +360,12 @@
                              (geometry! (:first-operand geometry))
                              (geometry! (:second-operand geometry)))
                       :mapped-item
-                      (let [source-item (geometry! (:source geometry))
+                      (let [source (:source geometry)
+                            source-items (if (= :collection (:kind source))
+                                           (vec (keep geometry! (:items source)))
+                                           (some-> (geometry! source) vector))
                             source-shape (emit! :ifcshaperepresentation
-                                                :$ "Body" "Body" (list* [source-item]))
+                                                :$ "Body" "Body" (list* source-items))
                             representation-map (emit! :ifcrepresentationmap
                                                       (axis! (:mapping-origin geometry))
                                                       source-shape)
@@ -673,7 +699,8 @@
                       imported-type (:ifc/entity-type element)
                       entity-type (if (and imported-type
                                            (or (= :other (:kind element))
-                                               (= imported-type kind-type)))
+                                               (= (:kind element)
+                                                  (get entity-kind-by-type imported-type))))
                                     imported-type
                                     (or kind-type :ifcbuildingelementproxy))
                       ref (product! element entity-type)]
@@ -1060,6 +1087,8 @@
     (when (= :ifcpolyline (:type entity))
       (mapv #(coordinates table %) (list-values (get-in entity [:args 0]))))))
 
+(declare curve)
+
 (defn- profile [table ref]
   (when-let [entity (referenced table ref)]
     (case (:type entity)
@@ -1082,9 +1111,17 @@
        :fillet-radius (get-in entity [:args 7])
        :flange-edge-radius (get-in entity [:args 8]) :flange-slope (get-in entity [:args 9])}
       :ifcarbitraryclosedprofiledef
-      {:kind :arbitrary-closed :profile-type (get-in entity [:args 0])
+      (let [profile-curve (curve table (get-in entity [:args 2]))]
+        (cond-> {:kind :arbitrary-closed :profile-type (get-in entity [:args 0])
+                 :name (get-in entity [:args 1])}
+          (= :polyline (:kind profile-curve)) (assoc :points (:points profile-curve))
+          (not= :polyline (:kind profile-curve)) (assoc :curve profile-curve)))
+      :ifcarbitraryprofiledefwithvoids
+      {:kind :arbitrary-with-voids :profile-type (get-in entity [:args 0])
        :name (get-in entity [:args 1])
-       :points (polyline table (get-in entity [:args 2]))}
+       :outer-curve (curve table (get-in entity [:args 2]))
+       :inner-curves (mapv #(curve table %)
+                           (list-values (get-in entity [:args 3])))}
       nil)))
 
 (defn- shape-items [table shape-ref]
@@ -1496,7 +1533,7 @@
 (defn product-geometry [table representation-ref]
   (geometry-items table (representation-items table representation-ref)))
 
-(def product-types (set (vals entity-types)))
+(def product-types (set (keys entity-kind-by-type)))
 
 (defn- typed-value [value]
   (if (and (vector? value) (= :typed (first value))) (nth value 2) value))
@@ -1781,7 +1818,7 @@
    {:id (:id entity) :global-id (get-in entity [:args 0])
     :ifc/entity-type (:type entity)
     :name (or (get-in entity [:args 2]) (name (:type entity)))
-    :kind (or (some (fn [[kind type]] (when (= type (:type entity)) kind)) entity-types) :other)
+    :kind (get entity-kind-by-type (:type entity) :other)
     :placement (local-placement table (get-in entity [:args 5]))
     :geometry (product-geometry table (get-in entity [:args 6]))}
    (product-presentation table (get-in entity [:args 6]) presentation)))
@@ -1997,9 +2034,18 @@
 (defn- portable-semantic-value [value]
   (walk/postwalk
    (fn [node]
-     (if (map? node)
-       (dissoc node :id :container-id :filled-by)
-       node))
+     (cond
+       (and (map? node)
+            (seq node)
+            (set/subset? (set (keys node)) #{:location :axis :ref-direction})
+            (every? #(zero? (double %)) (:location node))
+            (or (nil? (:axis node)) (= [0.0 0.0 1.0] (:axis node)))
+            (or (nil? (:ref-direction node))
+                (= (if (= 2 (count (:location node))) [1.0 0.0] [1.0 0.0 0.0])
+                   (:ref-direction node)))) nil
+       (map? node) (dissoc node :id :container-id :filled-by)
+       (= :$ node) nil
+       :else node))
    value))
 
 (defn semantic-fingerprint

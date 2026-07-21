@@ -21,8 +21,10 @@
                          (string/split path #"/"))))
 
 (defn- fixture-url [manifest fixture]
-  (str "https://raw.githubusercontent.com/buildingSMART/Sample-Test-Files/"
-       (:source/commit manifest) "/" (encoded-path (:source/path fixture))))
+  (str (or (:source/raw-base fixture)
+           "https://raw.githubusercontent.com/buildingSMART/Sample-Test-Files/")
+       (or (:source/commit fixture) (:source/commit manifest)) "/"
+       (encoded-path (:source/path fixture))))
 
 (defn- verify-fixture [manifest fixture]
   (let [url (fixture-url manifest fixture)
