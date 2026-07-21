@@ -923,6 +923,21 @@
        (is (:roundtrip/opaque-lossless? report)))
      :cljs (is true)))
 
+(deftest tessellation-edit-patches-original-coordinate-list
+  #?(:clj
+     (let [text (slurp (io/file "test/fixtures/external/buildingSMART-tessellated-item.ifc"))
+           document (ifc/read-document text)
+           edited (ifc/edit-first-geometry document)
+           output (ifc/write-spf edited)
+           actual (ifc/read-document output)]
+       (is (ifc/schema-native-geometry-edit? edited))
+       (is (= (:ifc/raw-entity-count document) (:ifc/raw-entity-count actual)))
+       (is (= (ifc/semantic-fingerprint edited)
+              (ifc/semantic-fingerprint actual)))
+       (is (not= (mapv :geometry (:ifc/elements document))
+                 (mapv :geometry (:ifc/elements actual)))))
+     :cljs (is true)))
+
 (deftest hybrid-corpus-report-proves-semantic-and-opaque-entity-preservation
   #?(:clj
      (let [fixture (slurp (io/file "test/fixtures/revit-wall.ifc"))

@@ -1242,6 +1242,29 @@
                    value)
     @result))
 
+(defn- coordinate-source-index [value]
+  (let [result (atom {})]
+    (walk/postwalk
+     (fn [node]
+       (when (map? node)
+         (when-let [id (:ifc/coordinate-source-entity-id node)]
+           (swap! result assoc id {:field :coordinates :value (:coordinates node)}))
+         (when-let [id (:ifc/origin-source-entity-id node)]
+           (swap! result assoc id {:field :origin :value (:origin node)
+                                   :point-id (:ifc/origin-point-entity-id node)}))
+         (doseq [[id point] (map vector (:ifc/point-source-entity-ids node)
+                                 (:points node))]
+           (when id (swap! result assoc id {:field :point :value point}))))
+       node)
+     value)
+    @result))
+
+(defn- step-coordinate-list [coordinates]
+  (into [:list] (map #(into [:list] %) coordinates)))
+
+(defn- step-point [point]
+  (into [:list] point))
+
 (defn- geometry-direct-edits [document]
   (when-let [imported (:ifc/import-semantics document)]
     (let [current (select-keys document imported-semantic-keys)
@@ -1253,8 +1276,8 @@
           after-geometries (mapv :geometry (:ifc/elements current))
           before-index (source-node-index before-geometries)
           after-index (source-node-index after-geometries)
-          edits (vec
-                 (keep (fn [[id before]]
+          scalar-edits (vec
+                        (keep (fn [[id before]]
                          (when-let [[field arg-index]
                                     (direct-geometry-field (:kind before))]
                            (let [after (get after-index id)
@@ -1265,13 +1288,56 @@
                                {:id id :field field :arg-index arg-index
                                 :value new-value}))))
                        before-index))
-          edited-by-id (into {} (map (juxt :id identity)) edits)
+          before-coordinates (coordinate-source-index before-geometries)
+          after-coordinates (coordinate-source-index after-geometries)
+          first-new-id (inc (reduce max 0 (map :id (:ifc/raw-entities document))))
+          reference-counts (frequencies (mapcat entity-refs (:ifc/raw-entities document)))
+          coordinate-edits
+          (vec (keep-indexed
+                (fn [index [id before]]
+                  (let [after (get after-coordinates id)]
+                    (when (and after (= (:field before) (:field after))
+                               (not= (:value before) (:value after)))
+                      (if (= :origin (:field before))
+                        (if (= 1 (get reference-counts (:point-id before)))
+                          {:id (:point-id before) :source-key id :field :origin
+                           :arg-index 0 :value (step-point (:value after))}
+                          (let [point-id (+ first-new-id index)]
+                            {:id id :source-key id :field :origin :arg-index 2
+                             :value [:ref point-id]
+                             :append [point-id :ifccartesianpoint
+                                      (step-point (:value after))]}))
+                        {:id id :source-key id :field (:field before) :arg-index 0
+                         :value (if (= :coordinates (:field before))
+                                  (step-coordinate-list (:value after))
+                                  (step-point (:value after)))}))))
+                before-coordinates))
+          edits (into scalar-edits coordinate-edits)
+          edited-by-id (into {} (map (juxt :id identity)) scalar-edits)
+          coordinate-by-id (into {} (map (juxt :source-key identity)) coordinate-edits)
           reconstructed
           (walk/postwalk
            (fn [node]
-             (if-let [{:keys [field value]}
-                      (and (map? node) (edited-by-id (:ifc/source-entity-id node)))]
-               (assoc node field value)
+             (if (map? node)
+               (let [node (if-let [{:keys [field value]}
+                                    (edited-by-id (:ifc/source-entity-id node))]
+                            (assoc node field value) node)
+                     node (if-let [edit (coordinate-by-id
+                                         (:ifc/coordinate-source-entity-id node))]
+                            (assoc node :coordinates
+                                   (:value (after-coordinates (:source-key edit)))) node)
+                     node (if-let [edit (coordinate-by-id
+                                         (:ifc/origin-source-entity-id node))]
+                            (assoc node :origin
+                                   (:value (after-coordinates (:source-key edit)))) node)]
+                 (if (seq (:ifc/point-source-entity-ids node))
+                   (update node :points
+                           (fn [points]
+                             (mapv (fn [id point]
+                                     (if-let [edit (coordinate-by-id id)]
+                                       (:value (after-coordinates (:source-key edit))) point))
+                                   (:ifc/point-source-entity-ids node) points)))
+                   node))
                node))
            before-geometries)]
       (when (and (= (without-geometry imported) (without-geometry current))
@@ -1300,9 +1366,19 @@
       text)))
 
 (defn- patch-direct-geometry-in-spf [document edits]
-  (reduce (fn [text {:keys [id arg-index value]}]
-            (patch-entity-arg text id arg-index value))
-          (:ifc/raw-spf document) edits))
+  (let [patched (reduce (fn [text {:keys [id arg-index value]}]
+                          (patch-entity-arg text id arg-index value))
+                        (:ifc/raw-spf document) edits)
+        appended (keep :append edits)]
+    (if (seq appended)
+      (let [marker "\nENDSEC;\nEND-ISO-10303-21;"
+            index (string/last-index-of patched marker)]
+        (if index
+          (str (subs patched 0 index) "\n"
+               (string/join "\n" (map part21/entity appended))
+               (subs patched index))
+          patched))
+      patched)))
 
 (def ^:private inverse-required-types
   #{:ifcproductdefinitionshape :ifcshaperepresentation
@@ -1695,6 +1771,8 @@
       {:axis1 (or (direction table (get-in entity [:args 0])) [1.0 0.0 0.0])
        :axis2 (or (direction table (get-in entity [:args 1])) [0.0 1.0 0.0])
        :origin (or (coordinates table (get-in entity [:args 2])) [0.0 0.0 0.0])
+       :ifc/origin-source-entity-id (:id entity)
+       :ifc/origin-point-entity-id (ref-id (get-in entity [:args 2]))
        :scale (let [value (get-in entity [:args 3])] (if (= :$ value) 1.0 value))
        :axis3 (or (direction table (get-in entity [:args 4])) [0.0 0.0 1.0])
        :scale2 (let [value (get-in entity [:args 5])] (if (or (nil? value) (= :$ value)) 1.0 value))
@@ -1870,7 +1948,9 @@
   (case (:type loop-entity)
     :ifcpolyloop
     {:loop-kind :polyloop
-     :points (mapv #(coordinates table %) (list-values (get-in loop-entity [:args 0])))}
+     :points (mapv #(coordinates table %) (list-values (get-in loop-entity [:args 0])))
+     :ifc/point-source-entity-ids
+     (mapv ref-id (list-values (get-in loop-entity [:args 0])))}
     :ifcedgeloop
     (let [edges (vec (keep #(oriented-edge table %)
                            (list-values (get-in loop-entity [:args 0]))))]
@@ -1962,10 +2042,12 @@
       nil)))
 
 (defn- tessellated-face-set [table item]
-  (case (:type item)
+  (let [coordinate-ref (get-in item [:args 0])]
+   (case (:type item)
     :ifctriangulatedfaceset
     {:kind :triangulated-face-set
-     :coordinates (point-list table (get-in item [:args 0]))
+     :coordinates (point-list table coordinate-ref)
+     :ifc/coordinate-source-entity-id (ref-id coordinate-ref)
      :normals (when-not (= :$ (get-in item [:args 1]))
                 (mapv list-values (list-values (get-in item [:args 1]))))
      :closed (get-in item [:args 2])
@@ -1974,13 +2056,14 @@
                        (mapv index-list (list-values (get-in item [:args 4]))))}
     :ifcpolygonalfaceset
     {:kind :polygonal-face-set
-     :coordinates (point-list table (get-in item [:args 0]))
+     :coordinates (point-list table coordinate-ref)
+     :ifc/coordinate-source-entity-id (ref-id coordinate-ref)
      :closed (get-in item [:args 1])
      :faces (vec (keep #(indexed-face table %)
                        (list-values (get-in item [:args 2]))))
      :pn-index (when-not (= :$ (get-in item [:args 3]))
                  (index-list (get-in item [:args 3])))}
-    nil))
+    nil)))
 
 (defn- geometry-item [table item-ref]
   (let [item (referenced table item-ref)]
@@ -2801,7 +2884,12 @@
                       (integer? sample) :ifcinteger
                       (number? sample) :ifcreal
                       :else :ifclabel)))
-       (map? node) (dissoc node :id :container-id :filled-by :ifc/source-entity-id)
+       (map? node) (dissoc node :id :container-id :filled-by
+                           :ifc/source-entity-id
+                           :ifc/coordinate-source-entity-id
+                           :ifc/origin-source-entity-id
+                           :ifc/origin-point-entity-id
+                           :ifc/point-source-entity-ids)
        (= :$ node) nil
        (= :notdefined node) nil
        :else node))
@@ -2875,12 +2963,15 @@
   [text edit]
   (let [before (read-document text)
         edited (edit before)
+        direct-edit-ids (set (map :id (geometry-direct-edits edited)))
         managed-types (set/union (generated-entity-types before)
                                  (generated-entity-types edited))
-        expected-opaque (opaque-entity-index before managed-types)
+        expected-opaque (apply dissoc (opaque-entity-index before managed-types)
+                               direct-edit-ids)
         output (write-spf edited)
         after (read-document output)
-        actual-opaque (select-keys (opaque-entity-index after managed-types)
+        actual-opaque (select-keys (apply dissoc (opaque-entity-index after managed-types)
+                                         direct-edit-ids)
                                    (keys expected-opaque))
         expected (semantic-fingerprint edited)
         actual (semantic-fingerprint after)
@@ -2942,6 +3033,22 @@
              (number? (ffirst coordinates)))
     (update-in coordinates [0 0] + 0.01)))
 
+(defn- perturb-brep-point [geometry]
+  (let [source-id (get-in geometry [:faces 0 :bounds 0
+                                    :ifc/point-source-entity-ids 0])]
+    (when (and source-id
+               (number? (get-in geometry [:faces 0 :bounds 0 :points 0 0])))
+      (walk/postwalk
+       (fn [node]
+         (if (and (map? node) (seq (:ifc/point-source-entity-ids node)))
+           (update node :points
+                   (fn [points]
+                     (mapv (fn [id point]
+                             (if (= source-id id) (update point 0 + 0.01) point))
+                           (:ifc/point-source-entity-ids node) points)))
+           node))
+       geometry))))
+
 (defn perturb-geometry
   "Apply one small deterministic edit to a supported neutral geometry tree.
   Boolean and collection operands are searched recursively, allowing clipped
@@ -2960,8 +3067,7 @@
       (when-let [coordinates (perturb-coordinate (:coordinates geometry))]
         (assoc geometry :coordinates coordinates))
       :faceted-brep
-      (when (number? (get-in geometry [:faces 0 :bounds 0 :points 0 0]))
-        (update-in geometry [:faces 0 :bounds 0 :points 0 0] + 0.01))
+      (perturb-brep-point geometry)
       :mapped-item
       (if (number? (get-in geometry [:transform :origin 0]))
         (update-in geometry [:transform :origin 0] + 0.01)
