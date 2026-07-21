@@ -423,6 +423,25 @@
                                   (:faces geometry))
                             shell (emit! :ifcclosedshell (list* faces))]
                         (emit! :ifcfacetedbrep shell))
+                      :face-based-surface-model
+                      (let [face-sets
+                            (mapv
+                             (fn [face-set]
+                               (let [faces
+                                     (mapv (fn [face]
+                                             (let [bounds
+                                                   (mapv
+                                                    (fn [bound]
+                                                      (emit! (if (= :outer (:kind bound))
+                                                               :ifcfaceouterbound :ifcfacebound)
+                                                             (loop! bound)
+                                                             (logical-true (:orientation bound))))
+                                                    (:bounds face))]
+                                               (emit! :ifcface (list* bounds))))
+                                           (:faces face-set))]
+                                 (emit! :ifcconnectedfaceset (list* faces))))
+                             (:face-sets geometry))]
+                        (emit! :ifcfacebasedsurfacemodel (list* face-sets)))
                       :advanced-brep
                       (let [faces
                             (mapv (fn [face]
@@ -474,6 +493,24 @@
                       (emit! :ifcbooleanresult (or (:operator geometry) :difference)
                              (geometry! (:first-operand geometry))
                              (geometry! (:second-operand geometry)))
+                      (:block :rectangular-pyramid :right-circular-cone
+                       :right-circular-cylinder :csg-sphere)
+                      (let [position (axis! (:position geometry))
+                            primitive
+                            (case (:kind geometry)
+                              :block (emit! :ifcblock position (:x-length geometry)
+                                            (:y-length geometry) (:z-length geometry))
+                              :rectangular-pyramid
+                              (emit! :ifcrectangularpyramid position (:x-length geometry)
+                                     (:y-length geometry) (:height geometry))
+                              :right-circular-cone
+                              (emit! :ifcrightcircularcone position (:height geometry)
+                                     (:bottom-radius geometry))
+                              :right-circular-cylinder
+                              (emit! :ifcrightcircularcylinder position (:height geometry)
+                                     (:radius geometry))
+                              :csg-sphere (emit! :ifcsphere position (:radius geometry)))]
+                        (emit! :ifccsgsolid primitive))
                       :mapped-item
                       (let [source (:source geometry)
                             source-items (if (= :collection (:kind source))
@@ -1229,9 +1266,18 @@
                (:ifc/raw-spf document) after)))
 
 (def ^:private direct-geometry-field
-  {:extruded-area-solid [:depth 3]
-   :revolved-area-solid [:angle 3]
-   :swept-disk-solid [:radius 1]})
+  {:extruded-area-solid [:depth 3 :scalar]
+   :revolved-area-solid [:angle 3 :scalar]
+   :swept-disk-solid [:radius 1 :scalar]
+   :cylinder [:radius 1 :scalar]
+   :sphere [:radius 1 :scalar]
+   :torus [:major-radius 1 :scalar]
+   :b-spline-surface [:u-knots 9 :list]
+   :block [:x-length 1 :scalar]
+   :rectangular-pyramid [:x-length 1 :scalar]
+   :right-circular-cone [:height 1 :scalar]
+   :right-circular-cylinder [:height 1 :scalar]
+   :csg-sphere [:radius 1 :scalar]})
 
 (defn- source-node-index [value]
   (let [result (atom {})]
@@ -1278,15 +1324,23 @@
           after-index (source-node-index after-geometries)
           scalar-edits (vec
                         (keep (fn [[id before]]
-                         (when-let [[field arg-index]
+                         (when-let [[field arg-index encoding]
                                     (direct-geometry-field (:kind before))]
                            (let [after (get after-index id)
                                  old-value (get before field)
                                  new-value (get after field)]
-                             (when (and after (number? old-value) (number? new-value)
-                                        (not= old-value new-value))
+                             (when (and after (not= old-value new-value)
+                                        (case encoding
+                                          :scalar (and (number? old-value)
+                                                       (number? new-value))
+                                          :list (and (sequential? old-value)
+                                                     (sequential? new-value))
+                                          false))
                                {:id id :field field :arg-index arg-index
-                                :value new-value}))))
+                                :semantic-value new-value
+                                :value (if (= :list encoding)
+                                         (into [:list] new-value)
+                                         new-value)}))))
                        before-index))
           before-coordinates (coordinate-source-index before-geometries)
           after-coordinates (coordinate-source-index after-geometries)
@@ -1319,9 +1373,9 @@
           (walk/postwalk
            (fn [node]
              (if (map? node)
-               (let [node (if-let [{:keys [field value]}
+               (let [node (if-let [{:keys [field value semantic-value]}
                                     (edited-by-id (:ifc/source-entity-id node))]
-                            (assoc node field value) node)
+                            (assoc node field (or semantic-value value)) node)
                      node (if-let [edit (coordinate-by-id
                                          (:ifc/coordinate-source-entity-id node))]
                             (assoc node :coordinates
@@ -1712,7 +1766,8 @@
 
 (defn- representation-items [table representation-ref]
   (when-let [product-shape (referenced table representation-ref)]
-    (when (= :ifcproductdefinitionshape (:type product-shape))
+    (when (#{:ifcproductdefinitionshape :ifcproductrepresentation}
+           (:type product-shape))
       (mapcat (fn [shape-ref] (shape-items table shape-ref))
               (list-values (get-in product-shape [:args 2]))))))
 
@@ -1977,9 +2032,27 @@
                                             (list-values (get-in face [:args 0]))))}))
                     (list-values (get-in shell [:args 0])))})))
 
+(defn- surface-model-face [table face-ref]
+  (let [face (referenced table face-ref)]
+    (when (= :ifcface (:type face))
+      {:bounds (vec (keep #(face-bound table %)
+                          (list-values (get-in face [:args 0]))))})))
+
+(defn- face-based-surface-model [table item]
+  {:kind :face-based-surface-model
+   :face-sets
+   (vec
+    (keep (fn [set-ref]
+            (let [face-set (referenced table set-ref)]
+              (when (= :ifcconnectedfaceset (:type face-set))
+                {:faces (vec (keep #(surface-model-face table %)
+                                   (list-values (get-in face-set [:args 0]))))})))
+          (list-values (get-in item [:args 0]))))})
+
 (defn- surface [table ref]
   (let [entity (referenced table ref)]
-    (case (:type entity)
+    (some->
+     (case (:type entity)
       :ifcplane {:kind :plane :position (axis-placement table (get-in entity [:args 0]))}
       :ifccylindricalsurface
       {:kind :cylinder :position (axis-placement table (get-in entity [:args 0]))
@@ -2009,7 +2082,8 @@
         (= :ifcrationalbsplinesurfacewithknots (:type entity))
         (assoc :weights (mapv (comp vec list-values)
                               (list-values (get-in entity [:args 12])))))
-      nil)))
+      nil)
+     (assoc :ifc/source-entity-id (:id entity)))))
 
 (defn- advanced-brep [table item]
   (let [shell (referenced table (get-in item [:args 0]))]
@@ -2065,6 +2139,27 @@
                  (index-list (get-in item [:args 3])))}
     nil)))
 
+(defn- csg-primitive [table item]
+  (let [position (axis-placement table (get-in item [:args 0]))]
+    (case (:type item)
+      :ifcblock
+      {:kind :block :position position
+       :x-length (get-in item [:args 1]) :y-length (get-in item [:args 2])
+       :z-length (get-in item [:args 3])}
+      :ifcrectangularpyramid
+      {:kind :rectangular-pyramid :position position
+       :x-length (get-in item [:args 1]) :y-length (get-in item [:args 2])
+       :height (get-in item [:args 3])}
+      :ifcrightcircularcone
+      {:kind :right-circular-cone :position position
+       :height (get-in item [:args 1]) :bottom-radius (get-in item [:args 2])}
+      :ifcrightcircularcylinder
+      {:kind :right-circular-cylinder :position position
+       :height (get-in item [:args 1]) :radius (get-in item [:args 2])}
+      :ifcsphere
+      {:kind :csg-sphere :position position :radius (get-in item [:args 1])}
+      nil)))
+
 (defn- geometry-item [table item-ref]
   (let [item (referenced table item-ref)]
     (some->
@@ -2101,6 +2196,9 @@
        :radius (get-in item [:args 1])
        :inner-radius (get-in item [:args 2])
        :start-param (get-in item [:args 3]) :end-param (get-in item [:args 4])}
+      :ifccsgsolid (geometry-item table (get-in item [:args 0]))
+      (:ifcblock :ifcrectangularpyramid :ifcrightcircularcone
+       :ifcrightcircularcylinder :ifcsphere) (csg-primitive table item)
       :ifcmappeditem (mapped-geometry table item)
       (:ifcbooleanclippingresult :ifcbooleanresult)
       {:kind :boolean-result :operator (get-in item [:args 0])
@@ -2108,10 +2206,14 @@
        :second-operand (geometry-item table (get-in item [:args 2]))}
       (:ifchalfspacesolid :ifcpolygonalboundedhalfspace) (half-space table item)
       :ifcfacetedbrep (faceted-brep table item)
+      :ifcfacebasedsurfacemodel (face-based-surface-model table item)
       :ifcadvancedbrep (advanced-brep table item)
       (:ifctriangulatedfaceset :ifcpolygonalfaceset) (tessellated-face-set table item)
       nil)
-     (assoc :ifc/source-entity-id (:id item)))))
+     (assoc :ifc/source-entity-id
+            (if (= :ifccsgsolid (:type item))
+              (ref-id (get-in item [:args 0]))
+              (:id item))))))
 
 (defn- geometry-items [table item-refs]
   (let [items (vec (keep #(geometry-item table %) item-refs))]
@@ -3033,11 +3135,20 @@
              (number? (ffirst coordinates)))
     (update-in coordinates [0 0] + 0.01)))
 
-(defn- perturb-brep-point [geometry]
-  (let [source-id (get-in geometry [:faces 0 :bounds 0
-                                    :ifc/point-source-entity-ids 0])]
-    (when (and source-id
-               (number? (get-in geometry [:faces 0 :bounds 0 :points 0 0])))
+(defn- first-point-source-id [geometry]
+  (let [result (atom nil)]
+    (walk/postwalk
+     (fn [node]
+       (when (and (nil? @result) (map? node)
+                  (number? (get-in node [:points 0 0])))
+         (reset! result (first (:ifc/point-source-entity-ids node))))
+       node)
+     geometry)
+    @result))
+
+(defn- perturb-shared-point [geometry]
+  (let [source-id (first-point-source-id geometry)]
+    (when source-id
       (walk/postwalk
        (fn [node]
          (if (and (map? node) (seq (:ifc/point-source-entity-ids node)))
@@ -3048,6 +3159,27 @@
                            (:ifc/point-source-entity-ids node) points)))
            node))
        geometry))))
+
+(defn- perturb-advanced-surface [geometry]
+  (loop [before [] [face & remaining] (:faces geometry)]
+    (when face
+      (let [surface (:surface face)
+            edited (case (:kind surface)
+                     :b-spline-surface
+                     (when (number? (last (:u-knots surface)))
+                       (update-in surface [:u-knots (dec (count (:u-knots surface)))]
+                                  + 0.01))
+                     :cylinder (when (number? (:radius surface))
+                                 (update surface :radius + 0.01))
+                     :sphere (when (number? (:radius surface))
+                               (update surface :radius + 0.01))
+                     :torus (when (number? (:major-radius surface))
+                              (update surface :major-radius + 0.01))
+                     nil)]
+        (if edited
+          (assoc geometry :faces
+                 (vec (concat before [(assoc face :surface edited)] remaining)))
+          (recur (conj before face) remaining))))))
 
 (defn perturb-geometry
   "Apply one small deterministic edit to a supported neutral geometry tree.
@@ -3067,7 +3199,17 @@
       (when-let [coordinates (perturb-coordinate (:coordinates geometry))]
         (assoc geometry :coordinates coordinates))
       :faceted-brep
-      (perturb-brep-point geometry)
+      (perturb-shared-point geometry)
+      :face-based-surface-model
+      (perturb-shared-point geometry)
+      :advanced-brep
+      (perturb-advanced-surface geometry)
+      (:block :rectangular-pyramid)
+      (when (number? (:x-length geometry)) (update geometry :x-length + 0.01))
+      (:right-circular-cone :right-circular-cylinder)
+      (when (number? (:height geometry)) (update geometry :height + 0.01))
+      :csg-sphere
+      (when (number? (:radius geometry)) (update geometry :radius + 0.01))
       :mapped-item
       (if (number? (get-in geometry [:transform :origin 0]))
         (update-in geometry [:transform :origin 0] + 0.01)
