@@ -71,3 +71,12 @@ clojure -M:ids-corpus -- /path/to/IDS/Documentation/ImplementersDocumentation/Te
 
 The command fails if the corpus does not contain exactly 287 paired cases or
 if any expected pass/fail result differs.
+
+## External schema validation
+
+`clojure -M:external-validator` generates a representative IFC4.3 exchange and
+validates it together with the pinned official fixtures using IfcOpenShell
+0.8.5 syntax, schema, and EXPRESS WHERE-rule checks. The runner uses an
+isolated `uv` environment and exits non-zero for any schema error. This gate is
+separate from IDS: schema conformance is checked first, then project-specific
+information requirements are evaluated by IDS.

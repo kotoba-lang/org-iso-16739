@@ -1,7 +1,7 @@
 {:paths ["src"]
  :deps {io.github.kotoba-lang/org-iso-10303
         {:git/url "https://github.com/kotoba-lang/org-iso-10303.git"
-         :git/sha "1653379c5ca5dfea5f157ac00a4c49cd570a0743"}}
+         :git/sha "b093c19c616cf50e6199fd06b8ae2464f0ca3815"}}
  :aliases {:test {:extra-paths ["test"]
                   :extra-deps {io.github.cognitect-labs/test-runner
                                {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
@@ -12,4 +12,6 @@
            :external-corpus {:extra-paths ["dev"]
                              :main-opts ["-m" "ifc.corpus-runner"]}
            :ids-corpus {:extra-paths ["dev"]
-                        :main-opts ["-m" "ifc.ids-corpus-runner"]}}}
+                        :main-opts ["-m" "ifc.ids-corpus-runner"]}
+           :external-validator {:extra-paths ["dev"]
+                                :main-opts ["-m" "ifc.external-validator-runner"]}}}

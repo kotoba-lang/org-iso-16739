@@ -105,6 +105,36 @@
 
 (def group-types #{:ifcgroup :ifcsystem :ifcdistributionsystem :ifczone})
 
+(def ^:private ifc-guid-alphabet
+  "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_$")
+
+(defn- generated-guid [id]
+  (let [digits (loop [value id result ()]
+                 (if (zero? value)
+                   result
+                   (recur (quot value 64)
+                          (conj result (.charAt ifc-guid-alphabet (mod value 64))))))
+        payload (apply str (concat (repeat (- 21 (count digits)) \0) digits))]
+    (str "0" payload)))
+
+(def ^:private generated-id-prefixes
+  ["REL_" "KOTOBA_" "SITE_" "BUILDING_" "STOREY_" "SPACE_"
+   "PSET_" "QSET_" "TYPE_" "OPENING_" "PORT_" "ZONE_" "SYSTEM_"])
+
+(defn- generated-id-placeholder? [value]
+  (and (string? value)
+       (some #(string/starts-with? value %) generated-id-prefixes)))
+
+(def ^:private rooted-emitted-types
+  (into #{:ifcproject :ifcsite :ifcbuilding :ifcbuildingstorey :ifcspace
+          :ifcpropertyset :ifcelementquantity
+          :ifcrelaggregates :ifcrelcontainedinspatialstructure
+          :ifcreldefinesbyproperties :ifcrelassociatesmaterial
+          :ifcrelassociatesclassification :ifcreldefinesbytype
+          :ifcrelvoidselement :ifcrelfillselement :ifcrelnests
+          :ifcrelassignstogroup :ifcrelconnectsports}
+        (concat (vals entity-types) (vals type-entity-types) group-types)))
+
 (defn exchange-document [{:keys [project elements]}]
   {:ifc/schema schema :ifc/contract-version contract-version
    :ifc/project project :ifc/elements (vec elements)})
@@ -113,12 +143,18 @@
   (let [next-id (atom 0) entities (atom [])
         emit! (fn [type & args]
                 (let [id (swap! next-id inc)]
-                  (swap! entities conj (into [id type] args))
+                  (swap! entities conj
+                         (into [id type]
+                               (if (and (not= :external-spf (:ifc/source document))
+                                        (contains? rooted-emitted-types type)
+                                        (generated-id-placeholder? (first args)))
+                                 (assoc (vec args) 0 (generated-guid id))
+                                 args)))
                   [:ref id]))
         unit! (fn unit! [unit]
                 (case (:kind unit)
                   :si
-                  (emit! :ifcsiunit :$ (:type unit) (or (:prefix unit) :$)
+                  (emit! :ifcsiunit :* (:type unit) (or (:prefix unit) :$)
                          (:name unit))
 
                   (:conversion-based :conversion-based-with-offset)
@@ -745,7 +781,7 @@
                     (mapv (fn [[unit-type unit]]
                             (unit! (assoc unit :type unit-type)))
                           (sort-by (comp name key) source-units))
-                    [(emit! :ifcsiunit :$ :lengthunit :$ :metre)])
+                    [(emit! :ifcsiunit :* :lengthunit :$ :metre)])
         units (emit! :ifcunitassignment (list* unit-refs))
         world-axis (axis! {:location (or (:world-origin georeference) [0.0 0.0 0.0])})
         true-north (when-let [direction (:true-north georeference)] (direction! direction))
@@ -778,7 +814,8 @@
                                                     (or (:factor-y georeference) 1.0)
                                                     (or (:factor-z georeference) 1.0)])))))
         project-ref (emit! :ifcproject (or (:global-id project) "KOTOBA_PROJECT") :$
-                           (or (:name project) "Project") :$ :$ :$ (list* [context]) :$ units)
+                           (or (:name project) "Project") :$ :$ :$ :$
+                           (list* [context]) units)
         spatial-roots (or (seq (:children project))
                           (when-not (= :external-spf (:ifc/source document))
                             [{:id :site :type :ifcsite :name "Site" :children
