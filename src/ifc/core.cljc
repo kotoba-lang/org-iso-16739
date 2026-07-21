@@ -422,7 +422,7 @@
                                nil)
                          children (vec (keep spatial! (:children node)))]
                      (when ref
-                       (swap! container-refs assoc (:id node) ref)
+                       (swap! container-refs assoc (:id node) ref (:global-id node) ref)
                        (when (= :ifcbuildingstorey type)
                          (swap! container-refs assoc :default ref))
                        (when (seq children)
@@ -742,6 +742,7 @@
                          :$ (:name group) (or (:description group) :$)
                          (or (:object-type group) :$)))
                 members (keep #(or (get @product-by-source %)
+                                   (get @container-refs %)
                                    (get @port-by-source %))
                               (concat (:member-ids group) (:member-global-ids group)))]
             (swap! group-by-source assoc (:id group) group-ref (:global-id group) group-ref)

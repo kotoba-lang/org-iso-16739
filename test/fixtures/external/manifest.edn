@@ -16,4 +16,17 @@
    :expected/schema "IFC4" :expected/products 1}
   {:file "buildingSMART-wall-opening-window.ifc"
    :source/path "IFC 4.0.2.1 (IFC 4)/ISO Spec - ReferenceView_V1.2/wall-with-opening-and-window.ifc"
-   :expected/schema "IFC4" :expected/products 2}]}
+   :expected/schema "IFC4" :expected/products 2}]
+ :remote-fixtures
+ [{:name "PCERT Architecture IFC4.3"
+   :source/path "IFC 4.3.2.0 (IFC4X3_ADD2)/PCERT-Sample-Scene/Building-Architecture.ifc"
+   :sha256 "a42962f9e2068040ac96636b1e7f6117150b6c0e3371f81088721b22796e463f"
+   :expected/schema "IFC4X3_ADD2" :expected/products 12}
+  {:name "PCERT HVAC IFC4.3"
+   :source/path "IFC 4.3.2.0 (IFC4X3_ADD2)/PCERT-Sample-Scene/Building-Hvac.ifc"
+   :sha256 "5451d81cd76a5743b33e0a685bf9c45fa283ca62f3807542c858c4d90aad7919"
+   :expected/schema "IFC4X3_ADD2" :expected/products 5}
+  {:name "PCERT Structural IFC4.3"
+   :source/path "IFC 4.3.2.0 (IFC4X3_ADD2)/PCERT-Sample-Scene/Building-Structural.ifc"
+   :sha256 "0343d5222d38e6be8ac7c31045c692e62c6018c80ea60d2f6023e73b846247ab"
+   :expected/schema "IFC4X3_ADD2" :expected/products 15}]}

@@ -35,6 +35,11 @@ Surface colour, transparency, reflectance method, sidedness, and presentation
 layer assignments attach to the standard representation items and survive both
 clean and hybrid rewrites.
 
+The repository pins official buildingSMART Reference View fixtures and larger
+IFC4.3 PCERT Architecture, HVAC, and Structural scenes with source commit,
+license attribution, expected product counts, and SHA-256 digests. Run
+`clojure -M:external-corpus` to download and verify the large corpus.
+
 Imported IFC2X3, IFC4, and IFC4.3 documents retain their source schema and raw
 entity graph. An unchanged document is returned byte-for-byte. When a modeled
 project or product is edited, hybrid export keeps the original vendor and
