@@ -938,6 +938,30 @@
                  (mapv :geometry (:ifc/elements actual)))))
      :cljs (is true)))
 
+(deftest csg-and-face-based-surface-model-roundtrip
+  (let [document
+        (ifc/exchange-document
+         {:project {:global-id "geometry-project" :name "Geometry forms"}
+          :elements
+          [{:id 1 :global-id "block-product" :kind :proxy :name "Block"
+            :geometry {:kind :block :position {:location [0.0 0.0 0.0]}
+                       :x-length 2.0 :y-length 3.0 :z-length 4.0}}
+           {:id 2 :global-id "surface-product" :kind :proxy :name "Surface"
+            :geometry
+            {:kind :face-based-surface-model
+             :face-sets
+             [{:faces [{:bounds [{:kind :outer :orientation true
+                                  :loop-kind :polyloop
+                                  :points [[0.0 0.0 0.0] [1.0 0.0 0.0]
+                                           [0.0 1.0 0.0]]}]}]}]}}]})
+        output (ifc/rewrite-spf document)
+        imported (ifc/read-document output)]
+    (is (string/includes? output "IFCCSGSOLID"))
+    (is (string/includes? output "IFCFACEBASEDSURFACEMODEL"))
+    (is (= [:block :face-based-surface-model]
+           (mapv #(get-in % [:geometry :kind]) (:ifc/elements imported))))
+    (is (:roundtrip/lossless? (ifc/roundtrip-report output)))))
+
 (deftest hybrid-corpus-report-proves-semantic-and-opaque-entity-preservation
   #?(:clj
      (let [fixture (slurp (io/file "test/fixtures/revit-wall.ifc"))
