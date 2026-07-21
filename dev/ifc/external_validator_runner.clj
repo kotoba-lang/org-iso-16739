@@ -38,7 +38,8 @@
        :action-type :permanent-g :action-source :dead-load-g
        :self-weight-coefficients [0.0 0.0 -1.0]
        :loads [{:id :p1 :name "P1" :node :n2 :fz -1000.0}
-               {:id :q1 :name "Q1" :member :m1 :fy -250.0}]}]}}))
+               {:id :q1 :name "Q1" :member :m1 :qy -250.0}]}]
+     :combinations [{:id :uls :name "ULS" :factors {:dead 1.35}}]}}))
 
 (defn -main [& _]
   (let [path (Files/createTempFile "kotoba-ifc-validation-" ".ifc"
