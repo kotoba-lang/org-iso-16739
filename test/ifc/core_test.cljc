@@ -974,3 +974,25 @@
        (is (= :triangulated-face-set
               (get-in basin [:ifc/elements 0 :geometry :source :kind]))))
      :cljs (is true)))
+
+(deftest zone-membership-preserves-spatial-elements
+  (let [document
+        (assoc
+         (ifc/exchange-document
+          {:project {:id 1 :global-id "project" :name "Project"
+                     :children
+                     [{:id 2 :global-id "site" :name "Site" :type :ifcsite
+                       :children
+                       [{:id 3 :global-id "building" :name "Building" :type :ifcbuilding
+                         :children
+                         [{:id 4 :global-id "storey" :name "Storey"
+                           :type :ifcbuildingstorey :children
+                           [{:id 5 :global-id "living-space" :name "Living"
+                             :type :ifcspace :children []}]}]}]}]}
+           :elements []})
+         :ifc/groups
+         [{:id 6 :global-id "living-zone" :kind :zone :name "Living Zone"
+           :member-global-ids ["living-space"]}])
+        imported (ifc/read-document (ifc/write-spf document))]
+    (is (= ["living-space"] (get-in imported [:ifc/groups 0 :member-global-ids])))
+    (is (:roundtrip/lossless? (ifc/roundtrip-report (ifc/write-spf document))))))
