@@ -1043,14 +1043,19 @@
          [{:id :chw :global-id "SYSTEM_CHW" :kind :distribution-system
            :name "Chilled water" :predefined-type :chilledwater
            :member-global-ids ["3b0AoFivPN6RDJO6UL_GfZ" "0eA6m4fELI9QBIhP3wiLAp"]
+           :services-spatial-global-ids ["05rScmOVzMoQXOfbYdtLYj"]}
+          {:id :legacy :global-id "SYSTEM_LEGACY" :kind :system
+           :name "Legacy supply system"
            :services-spatial-global-ids ["05rScmOVzMoQXOfbYdtLYj"]}])
         output (ifc/write-spf document)
         imported (ifc/read-document output)
-        system (first (:ifc/groups imported))
+        system (first (filter #(= :distribution-system (:kind %)) (:ifc/groups imported)))
+        legacy (first (filter #(= :system (:kind %)) (:ifc/groups imported)))
         port (get-in imported [:ifc/elements 0 :ports 0])]
     (is (string/includes? output "IFCRELSERVICESBUILDINGS"))
     (is (= :chilledwater (:predefined-type system)))
     (is (= ["05rScmOVzMoQXOfbYdtLYj"] (:services-spatial-global-ids system)))
+    (is (= ["05rScmOVzMoQXOfbYdtLYj"] (:services-spatial-global-ids legacy)))
     (is (= #{"3b0AoFivPN6RDJO6UL_GfZ" "0eA6m4fELI9QBIhP3wiLAp"}
            (set (:member-global-ids system))))
     (is (= 0.1 (get-in port [:property-sets "Pset_KotobaConnector"
