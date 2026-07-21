@@ -25,7 +25,25 @@
            :type :ifcbuildingstorey :children []}]}]}]}
     :elements
     [{:id 10 :global-id "3b0AoFivPN6RDJO6UL_GfZ" :kind :wall
-      :name "Validated Wall" :container-id 4}]
+      :name "Validated Wall" :container-id 4}
+     {:id 11 :global-id "1wmyFZ7pv7MghF0F$h9xDR" :kind :pipe-segment
+      :name "Validated Pipe" :container-id 4
+      :ports [{:id :pipe-in :global-id "37cSLEVEb6YQZVfLRW1MSY"
+               :name "Pipe inlet" :placement {:location [0.0 0.0 0.0]}
+               :flow-direction :sink :predefined-type :pipe
+               :system-type :chilledwater
+               :property-sets
+               {"Pset_KotobaConnector"
+                {:properties
+                 {"Shape" {:kind :single :value "round" :value-type :ifclabel}
+                  "Diameter" {:kind :single :value 0.1
+                              :value-type :ifclengthmeasure}}}}}]}]
+    :groups
+    [{:id :chw :global-id "2m6JtV3Mn2T8sN5eN0hTtR"
+      :kind :distribution-system :name "Chilled Water"
+      :predefined-type :chilledwater
+      :member-global-ids ["1wmyFZ7pv7MghF0F$h9xDR" "37cSLEVEb6YQZVfLRW1MSY"]
+      :services-spatial-global-ids ["05rScmOVzMoQXOfbYdtLYj"]}]
     :structural-analysis
     {:name "Validated structural model" :predefined-type :loading-3d
      :nodes [{:id :n1 :name "N1" :point [0.0 0.0 0.0]

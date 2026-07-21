@@ -1013,6 +1013,49 @@
     (is (= ["living-space"] (get-in imported [:ifc/groups 0 :member-global-ids])))
     (is (:roundtrip/lossless? (ifc/roundtrip-report (ifc/write-spf document))))))
 
+(deftest distribution-system-services-spatial-elements-and-preserves-port-data
+  (let [document
+        (assoc
+         (ifc/exchange-document
+          {:project {:id 1 :global-id "KOTOBA_PROJECT" :name "MEP"
+                     :children
+                     [{:id 2 :global-id "SITE_MEP" :name "Site" :type :ifcsite
+                       :children
+                       [{:id 3 :global-id "05rScmOVzMoQXOfbYdtLYj" :name "Building"
+                         :type :ifcbuilding :children
+                         [{:id 4 :global-id "STOREY_MEP" :name "L1"
+                           :type :ifcbuildingstorey :children []}]}]}]}
+           :elements
+           [{:id :pipe :global-id "3b0AoFivPN6RDJO6UL_GfZ"
+             :kind :pipe-segment :name "CHW pipe" :container-id 4
+             :ports
+             [{:id :pipe-in :global-id "0eA6m4fELI9QBIhP3wiLAp" :name "Pipe inlet"
+               :placement {:location [0.0 0.0 0.0]}
+               :flow-direction :sink :predefined-type :pipe
+               :system-type :chilledwater
+               :property-sets
+               {"Pset_KotobaConnector"
+                {:properties
+                 {"Shape" {:kind :single :value "round" :value-type :ifclabel}
+                  "Diameter" {:kind :single :value 0.1
+                              :value-type :ifclengthmeasure}}}}}]}]})
+         :ifc/groups
+         [{:id :chw :global-id "SYSTEM_CHW" :kind :distribution-system
+           :name "Chilled water" :predefined-type :chilledwater
+           :member-global-ids ["3b0AoFivPN6RDJO6UL_GfZ" "0eA6m4fELI9QBIhP3wiLAp"]
+           :services-spatial-global-ids ["05rScmOVzMoQXOfbYdtLYj"]}])
+        output (ifc/write-spf document)
+        imported (ifc/read-document output)
+        system (first (:ifc/groups imported))
+        port (get-in imported [:ifc/elements 0 :ports 0])]
+    (is (string/includes? output "IFCRELSERVICESBUILDINGS"))
+    (is (= :chilledwater (:predefined-type system)))
+    (is (= ["05rScmOVzMoQXOfbYdtLYj"] (:services-spatial-global-ids system)))
+    (is (= #{"3b0AoFivPN6RDJO6UL_GfZ" "0eA6m4fELI9QBIhP3wiLAp"}
+           (set (:member-global-ids system))))
+    (is (= 0.1 (get-in port [:property-sets "Pset_KotobaConnector"
+                             :properties "Diameter" :value])))))
+
 (deftest preserves-legacy-standard-case-and-mapped-profile-collections
   (let [legacy (assoc (ifc/exchange-document
                        {:project {:id 1 :global-id "p" :name "Legacy" :children []}
