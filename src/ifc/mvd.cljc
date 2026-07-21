@@ -28,12 +28,17 @@
 (defn default-profile [schema]
   (if (= "IFC2X3" schema) :coordination-view-2 :design-transfer-view))
 
+(defn compatible-profile?
+  "True when a recognized profile is defined for the selected IFC schema."
+  [schema profile]
+  (boolean (contains? (get-in profiles [profile :schemas] #{}) schema)))
+
 (defn header-description [schema profile]
   (let [profile (or profile (default-profile schema))
         definition (get profiles profile)]
     (when-not definition
       (throw (ex-info "unknown IFC model view" {:profile profile})))
-    (when-not (contains? (:schemas definition) schema)
+    (when-not (compatible-profile? schema profile)
       (throw (ex-info "IFC model view is incompatible with schema"
                       {:profile profile :schema schema
                        :supported-schemas (:schemas definition)})))

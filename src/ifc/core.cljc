@@ -931,7 +931,7 @@
                      (list* members) :$ group-ref))))
         _services-buildings
         (doseq [group (:ifc/groups document)
-                :when (= :distribution-system (:kind group))
+                :when (contains? #{:system :distribution-system} (:kind group))
                 :let [group-ref (or (get @group-by-source (:id group))
                                     (get @group-by-source (:global-id group)))
                       spatial-refs (keep #(get @container-refs %)
@@ -1157,16 +1157,17 @@
   products against a regenerated semantic graph."
   [document]
   (let [raw (:ifc/raw-entities document)
-        raw-table (into {} (map (juxt :id identity)) raw)
         generated-vectors (standard-entities (dissoc document :ifc/raw-spf
                                                       :ifc/import-fingerprint))
         generated (mapv (fn [[id type & args]] {:id id :type type :args (vec args)})
                         generated-vectors)
         generated-table (into {} (map (juxt :id identity)) generated)
         spatial-types #{:ifcproject :ifcsite :ifcbuilding :ifcbuildingstorey :ifcspace}
+        type-product-types (set (vals type-entity-types))
         grouped-or-port-types (conj group-types :ifcdistributionport)
         product-or-spatial? #(or (contains? product-types (:type %))
                                  (contains? spatial-types (:type %))
+                                 (contains? type-product-types (:type %))
                                  (contains? grouped-or-port-types (:type %)))
         relationship? #(string/starts-with? (name (:type %)) "ifcrel")
         by-global (fn [entities]
@@ -1183,6 +1184,9 @@
                       raw-by-global)
         matched-raw-ids (set (map (comp :id first) matched))
         matched-generated-ids (set (map (comp :id second) matched))
+        raw-to-generated (into {} (map (fn [[original replacement]]
+                                         [(:id original) (:id replacement)]))
+                               matched)
         deleted (keep (fn [[global-id entity]]
                         (when (and (or (contains? product-types (:type entity))
                                        (contains? grouped-or-port-types (:type entity)))
@@ -1198,10 +1202,12 @@
                            generated-by-global)
         new-product-ids (set new-products)
         generated-to-raw
-        (into {} (keep (fn [[global-id generated-entity]]
-                         (when-let [raw-entity (get raw-by-global global-id)]
-                           [(:id generated-entity) (:id raw-entity)]))
-                       generated-by-global))
+        (into {} (keep (fn [generated-entity]
+                         (let [global-id (get-in generated-entity [:args 0])]
+                           (when-let [raw-entity (and (string? global-id)
+                                                     (get raw-by-global global-id))]
+                             [(:id generated-entity) (:id raw-entity)])))
+                       generated))
         geometry-roots
         (mapcat (fn [[original replacement]]
                   (if (= :ifcproject (:type original))
@@ -1209,13 +1215,6 @@
                     (keep ref-id [(get-in replacement [:args 5])
                                   (get-in replacement [:args 6])])))
                 matched)
-        raw-geometry-roots
-        (mapcat (fn [[original _]]
-                  (if (= :ifcproject (:type original)) []
-                      (keep ref-id [(get-in original [:args 5])
-                                    (get-in original [:args 6])])))
-                matched)
-        raw-geometry-dependencies (dependency-ids raw-table raw-geometry-roots)
         reconciled-relation-types
         #{:ifcreldefinesbyproperties :ifcreldefinesbytype
           :ifcrelassociatesmaterial :ifcrelassociatesclassification
@@ -1228,6 +1227,12 @@
                                  (entity-refs entity))))
                   (:id entity)))
               generated)
+        generated-relation-refs-by-type
+        (reduce (fn [result id]
+                  (let [entity (get generated-table id)]
+                    (update result (:type entity) (fnil set/union #{})
+                            (entity-refs entity))))
+                {} relation-roots)
         geometry-dependencies (dependency-ids generated-table
                                               (concat geometry-roots new-products))
         presentation-types #{:ifcstyleditem :ifcpresentationlayerassignment}
@@ -1276,17 +1281,18 @@
                                                                 (entity-refs entity)))
                                          (and (contains? reconciled-relation-types
                                                          (:type entity))
-                                              (seq (set/intersection
-                                                    matched-raw-ids
-                                                    (entity-refs entity)))))))
-        removed-presentation? (fn [entity]
-                                (and (contains? presentation-types (:type entity))
-                                     (seq (set/intersection raw-geometry-dependencies
-                                                            (entity-refs entity)))))
+                                              (let [related-generated
+                                                    (set (keep raw-to-generated
+                                                               (set/intersection
+                                                                matched-raw-ids
+                                                                (entity-refs entity))))]
+                                                (seq (set/intersection
+                                                      related-generated
+                                                      (get generated-relation-refs-by-type
+                                                           (:type entity) #{}))))))))
         patched (->> raw
                      (remove #(or (contains? deleted-ids (:id %))
-                                  (removed-relationship? %)
-                                  (removed-presentation? %)))
+                                  (removed-relationship? %)))
                      (mapv #(get replacement-by-raw-id (:id %) %)))]
     (mapv (fn [{:keys [id type args]}] (into [id type] args))
           (concat patched appended))))
@@ -2563,9 +2569,12 @@
                                                     :classifications
                                                     (get classifications opening-id [])))
                                            (get openings-by-host id))))))
+        detected-model-view (mvd/detect-profile (:part21/file-description parsed))
         document
         {:ifc/schema (:part21/schema parsed) :ifc/contract-version contract-version
-         :ifc/model-view (mvd/detect-profile (:part21/file-description parsed))
+         :ifc/model-view (when (mvd/compatible-profile? (:part21/schema parsed)
+                                                        detected-model-view)
+                           detected-model-view)
          :ifc/header {:description (:part21/file-description parsed)
                       :implementation-level (:part21/implementation-level parsed)
                       :file-name (:part21/file-name parsed)}

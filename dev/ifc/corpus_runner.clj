@@ -41,6 +41,13 @@
         text (String. bytes StandardCharsets/UTF_8)
         document (ifc/read-document text)
         report (ifc/roundtrip-report text)
+        edited-name (str "Kotoba round-trip — " (:name fixture))
+        edit (fn [document]
+               (if (seq (:ifc/elements document))
+                 (assoc-in document [:ifc/elements 0 :name] edited-name)
+                 document))
+        hybrid (ifc/hybrid-roundtrip-report text edit)
+        edited-document (ifc/read-document (:roundtrip/output hybrid))
         expected-georef (:expected/georeference fixture)
         georef (:ifc/georeference document)
         projected (when expected-georef
@@ -50,6 +57,11 @@
         result {:name (:name fixture) :schema (:roundtrip/input-schema report)
                 :products (:roundtrip/input-elements report)
                 :lossless? (:roundtrip/lossless? report)
+                :hybrid-semantic-lossless? (:roundtrip/semantic-lossless? hybrid)
+                :hybrid-opaque-lossless? (:roundtrip/opaque-lossless? hybrid)
+                :hybrid-edit-observed?
+                (= edited-name (get-in edited-document [:ifc/elements 0 :name]))
+                :opaque-entities (:roundtrip/opaque-input-count hybrid)
                 :georeference?
                 (when expected-georef
                   (and (= (:crs expected-georef) (get-in georef [:projected-crs :name]))
@@ -58,15 +70,30 @@
     (when-not (and (= (:expected/schema fixture) (:schema result))
                    (= (:expected/products fixture) (:products result))
                    (not= false (:georeference? result))
-                   (:lossless? result))
+                   (:lossless? result)
+                   (:hybrid-semantic-lossless? result)
+                   (:hybrid-opaque-lossless? result)
+                   (:hybrid-edit-observed? result))
       (throw (ex-info "external IFC conformance failed" result)))
     result))
 
 (defn -main [& _]
   (let [manifest (edn/read-string (slurp manifest-path))
-        results (mapv #(verify-fixture manifest %) (:remote-fixtures manifest))]
+        results (mapv (fn [fixture]
+                        (try
+                          (verify-fixture manifest fixture)
+                          (catch Exception error
+                            (throw (ex-info "external IFC fixture failed"
+                                            {:name (:name fixture)
+                                             :source/path (:source/path fixture)}
+                                            error)))))
+                      (:remote-fixtures manifest))]
     (prn {:corpus/source (:source/repository manifest)
           :corpus/commit (:source/commit manifest)
           :corpus/files results
           :corpus/products (reduce + (map :products results))
-          :corpus/lossless? (every? :lossless? results)})))
+          :corpus/lossless? (every? :lossless? results)
+          :corpus/hybrid-edit-lossless?
+          (every? #(and (:hybrid-semantic-lossless? %)
+                        (:hybrid-opaque-lossless? %)
+                        (:hybrid-edit-observed? %)) results)})))

@@ -9,6 +9,8 @@
          (mvd/detect-profile ["ViewDefinition [Reference View] no scale"])))
   (is (= :alignment-based-reference-view
          (mvd/detect-profile ["ViewDefinition [Alignment-based Reference View]"])))
+  (is (mvd/compatible-profile? "IFC2X3" :coordination-view-2))
+  (is (false? (mvd/compatible-profile? "IFC4" :coordination-view-2)))
   (is (:mvd/pass?
        (mvd/validate-declaration
         {:schema "IFC4" :profile :reference-view
