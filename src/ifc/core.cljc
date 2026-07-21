@@ -135,7 +135,8 @@
           :ifcrelassociatesclassification :ifcreldefinesbytype
           :ifcrelvoidselement :ifcrelfillselement :ifcrelnests
           :ifcrelassignstogroup :ifcrelconnectsports
-          :ifcrelconnectsstructuralactivity :ifcrelassignstogroupbyfactor}
+          :ifcrelconnectsstructuralactivity :ifcrelassignstogroupbyfactor
+          :ifcrelservicesbuildings}
         (concat (vals entity-types) (vals type-entity-types) group-types
                 [:ifcstructuralanalysismodel :ifcstructuralpointconnection
                  :ifcstructuralcurvemember :ifcstructuralpointaction
@@ -143,10 +144,12 @@
                  :ifcstructuralloadgroup :ifcstructuralresultgroup
                  :ifcrelconnectsstructuralmember])))
 
-(defn exchange-document [{:keys [project elements structural-analysis]
+(defn exchange-document [{:keys [project elements groups connections structural-analysis]
                           :as source}]
   (cond-> {:ifc/schema schema :ifc/contract-version contract-version
            :ifc/project project :ifc/elements (vec elements)}
+    (some? groups) (assoc :ifc/groups (vec groups))
+    (some? connections) (assoc :ifc/connections (vec connections))
     (some? structural-analysis)
     (assoc :ifc/structural-analysis structural-analysis)
     (:model-view source) (assoc :ifc/model-view (:model-view source))))
@@ -890,11 +893,13 @@
                        (or (:global-id port) (str "PORT_" (:id port))) :$
                        (:name port) (or (:description port) :$)
                        (or (:object-type port) :$) (local! (:placement port)) :$
-                       (or (:tag port) :$) (or (:flow-direction port) :notdefined)
+                       (or (:flow-direction port) :notdefined)
                        (or (:predefined-type port) :notdefined)
                        (or (:system-type port) :notdefined))
                 element-ref (get @product-by-source (:id element))]
             (swap! port-by-source assoc (:id port) port-ref (:global-id port) port-ref)
+            (psets! port-ref port)
+            (qsets! port-ref port)
             (emit! :ifcrelnests (str "REL_PORT_" (:id element) "_" (:id port))
                    :$ :$ :$ element-ref (list* [port-ref]))))
         group-by-source (atom {})
@@ -919,9 +924,23 @@
                                    (get @port-by-source %))
                               (concat (:member-ids group) (:member-global-ids group)))]
             (swap! group-by-source assoc (:id group) group-ref (:global-id group) group-ref)
+            (psets! group-ref group)
+            (qsets! group-ref group)
             (when (seq members)
               (emit! :ifcrelassignstogroup (str "REL_GROUP_" (:id group)) :$ :$ :$
                      (list* members) :$ group-ref))))
+        _services-buildings
+        (doseq [group (:ifc/groups document)
+                :when (= :distribution-system (:kind group))
+                :let [group-ref (or (get @group-by-source (:id group))
+                                    (get @group-by-source (:global-id group)))
+                      spatial-refs (keep #(get @container-refs %)
+                                         (concat (:services-spatial-ids group)
+                                                 (:services-spatial-global-ids group)))]
+                :when (and group-ref (seq spatial-refs))]
+          (emit! :ifcrelservicesbuildings
+                 (str "REL_SERVICES_" (:id group)) :$ :$ :$
+                 group-ref (list* (vec spatial-refs))))
         _connections
         (doseq [connection (:ifc/connections document)]
           (let [relating (or (get @port-by-source (:relating-port-id connection))
@@ -2236,9 +2255,17 @@
   (let [members
         (reduce (fn [result relation]
                   (let [group-id (ref-id (get-in relation [:args 6]))]
-                    (assoc result group-id
-                           (mapv ref-id (list-values (get-in relation [:args 4]))))))
-                {} (filter #(= :ifcrelassignstogroup (:type %)) entities))]
+                    (update result group-id (fnil into [])
+                            (mapv ref-id (list-values (get-in relation [:args 4]))))))
+                {} (filter #(= :ifcrelassignstogroup (:type %)) entities))
+        serviced-spatial
+        (reduce (fn [result relation]
+                  (update result (ref-id (get-in relation [:args 4]))
+                          (fnil into [])
+                          (mapv ref-id (list-values (get-in relation [:args 5])))))
+                {} (filter #(= :ifcrelservicesbuildings (:type %)) entities))
+        psets-by-object (property-sets table entities)
+        qsets-by-object (quantity-sets table entities)]
     (mapv (fn [entity]
             (let [member-entities (keep table (get members (:id entity)))]
               (cond->
@@ -2248,7 +2275,12 @@
                 :ifc/type (:type entity) :name (get-in entity [:args 2])
                 :description (get-in entity [:args 3])
                 :object-type (get-in entity [:args 4])
-                :member-global-ids (mapv #(get-in % [:args 0]) member-entities)}
+                :member-global-ids (mapv #(get-in % [:args 0]) member-entities)
+                :property-sets (get psets-by-object (:id entity) {})
+                :quantity-sets (get qsets-by-object (:id entity) {})
+                :services-spatial-global-ids
+                (mapv #(get-in (get table %) [:args 0])
+                      (get serviced-spatial (:id entity)))}
                 (#{:ifczone :ifcdistributionsystem} (:type entity))
                 (assoc :long-name (get-in entity [:args 5]))
                 (= :ifcdistributionsystem (:type entity))
@@ -2261,7 +2293,9 @@
                            (let [owner (ref-id (get-in relation [:args 4]))]
                              (map (fn [port] [(ref-id port) owner])
                                   (list-values (get-in relation [:args 5])))))
-                         (filter #(= :ifcrelnests (:type %)) entities)))]
+                         (filter #(= :ifcrelnests (:type %)) entities)))
+        psets-by-object (property-sets table entities)
+        qsets-by-object (quantity-sets table entities)]
     {:by-owner
      (group-by #(get owner-by-port (:id %))
                (mapv (fn [entity]
@@ -2270,10 +2304,11 @@
                         :description (get-in entity [:args 3])
                         :object-type (get-in entity [:args 4])
                         :placement (local-placement table (get-in entity [:args 5]))
-                        :tag (get-in entity [:args 7])
-                        :flow-direction (get-in entity [:args 8])
-                        :predefined-type (get-in entity [:args 9])
-                        :system-type (get-in entity [:args 10])})
+                        :flow-direction (get-in entity [:args 7])
+                        :predefined-type (get-in entity [:args 8])
+                        :system-type (get-in entity [:args 9])
+                        :property-sets (get psets-by-object (:id entity) {})
+                        :quantity-sets (get qsets-by-object (:id entity) {})})
                      (filter #(= :ifcdistributionport (:type %)) entities)))
      :by-id (into {} (map (juxt :id identity))
                   (map (fn [entity]
