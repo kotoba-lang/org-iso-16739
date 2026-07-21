@@ -26,19 +26,25 @@
        (or (:source/commit fixture) (:source/commit manifest)) "/"
        (encoded-path (:source/path fixture))))
 
+(defn fetch-fixture
+  "Fetch one pinned remote fixture and reject content that does not match its
+  manifest digest."
+  [manifest fixture]
+  (let [url (fixture-url manifest fixture)
+        bytes (with-open [stream (.openStream (.toURL (URI. url)))] (.readAllBytes stream))
+        digest (sha256 bytes)]
+    (when-not (= (:sha256 fixture) digest)
+      (throw (ex-info "external IFC fixture checksum mismatch"
+                      {:name (:name fixture) :expected (:sha256 fixture)
+                       :actual digest :url url})))
+    {:url url :bytes bytes :text (String. bytes StandardCharsets/UTF_8)}))
+
 (defn- near? [expected actual]
   (<= (Math/abs (- (double expected) (double actual)))
       (* 1.0e-10 (max 1.0 (Math/abs (double expected))))))
 
 (defn- verify-fixture [manifest fixture]
-  (let [url (fixture-url manifest fixture)
-        bytes (with-open [stream (.openStream (.toURL (URI. url)))] (.readAllBytes stream))
-        digest (sha256 bytes)
-        _ (when-not (= (:sha256 fixture) digest)
-            (throw (ex-info "external IFC fixture checksum mismatch"
-                            {:name (:name fixture) :expected (:sha256 fixture)
-                             :actual digest :url url})))
-        text (String. bytes StandardCharsets/UTF_8)
+  (let [{:keys [text]} (fetch-fixture manifest fixture)
         document (ifc/read-document text)
         report (ifc/roundtrip-report text)
         edited-name (str "Kotoba round-trip — " (:name fixture))

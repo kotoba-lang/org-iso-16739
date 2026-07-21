@@ -156,13 +156,18 @@
 
 (defn- standard-entities [document]
   (let [next-id (atom 0) entities (atom [])
+        raw-global-ids (into #{} (keep #(get-in % [:args 0]))
+                             (:ifc/raw-entities document))
         emit! (fn [type & args]
                 (let [id (swap! next-id inc)]
                   (swap! entities conj
                          (into [id type]
-                               (if (and (not= :external-spf (:ifc/source document))
-                                        (contains? rooted-emitted-types type)
-                                        (generated-id-placeholder? (first args)))
+                               (if (and (contains? rooted-emitted-types type)
+                                        (generated-id-placeholder? (first args))
+                                        (or (not= :external-spf (:ifc/source document))
+                                            (and (seq (:ifc/raw-entities document))
+                                                 (not (contains? raw-global-ids
+                                                                 (first args))))))
                                  (assoc (vec args) 0 (generated-guid id))
                                  args)))
                   [:ref id]))
