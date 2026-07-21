@@ -92,10 +92,21 @@
                    text #(assoc-in % [:ifc/elements 0 :name]
                                    (str "Validated edit — " (:name fixture))))))
               (:remote-fixtures manifest))
+        geometry-pairs
+        (vec
+         (keep (fn [fixture]
+                 (let [{:keys [text]} (corpus/fetch-fixture manifest fixture)
+                       document (ifc/read-document text)]
+                   (when-let [edited (ifc/edit-first-geometry document)]
+                     (when (ifc/schema-native-geometry-edit? edited)
+                       (validation-pair text (constantly edited))))))
+               (:remote-fixtures manifest)))
         geometry-text (slurp "test/fixtures/external/buildingSMART-wall-opening-window.ifc")
-        pairs (conj name-pairs
-                    (validation-pair geometry-text
-                                     #(update-in % [:ifc/elements 0 :geometry :depth] + 100.0)))]
+        pairs (into (conj name-pairs
+                          (validation-pair geometry-text
+                                           #(update-in % [:ifc/elements 0 :geometry :depth]
+                                                       + 100.0)))
+                    geometry-pairs)]
     (try
       (spit (.toFile path) (ifc/write-spf generated-document))
       (run-validator! (conj official-fixtures (str path)))

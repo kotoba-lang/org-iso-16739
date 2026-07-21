@@ -1228,6 +1228,82 @@
                    text))
                (:ifc/raw-spf document) after)))
 
+(def ^:private direct-geometry-field
+  {:extruded-area-solid [:depth 3]
+   :revolved-area-solid [:angle 3]
+   :swept-disk-solid [:radius 1]})
+
+(defn- source-node-index [value]
+  (let [result (atom {})]
+    (walk/postwalk (fn [node]
+                     (when-let [id (and (map? node) (:ifc/source-entity-id node))]
+                       (swap! result assoc id node))
+                     node)
+                   value)
+    @result))
+
+(defn- geometry-direct-edits [document]
+  (when-let [imported (:ifc/import-semantics document)]
+    (let [current (select-keys document imported-semantic-keys)
+          without-geometry #(update % :ifc/elements
+                                    (fn [elements] (mapv (fn [element]
+                                                          (dissoc element :geometry))
+                                                        elements)))
+          before-geometries (mapv :geometry (:ifc/elements imported))
+          after-geometries (mapv :geometry (:ifc/elements current))
+          before-index (source-node-index before-geometries)
+          after-index (source-node-index after-geometries)
+          edits (vec
+                 (keep (fn [[id before]]
+                         (when-let [[field arg-index]
+                                    (direct-geometry-field (:kind before))]
+                           (let [after (get after-index id)
+                                 old-value (get before field)
+                                 new-value (get after field)]
+                             (when (and after (number? old-value) (number? new-value)
+                                        (not= old-value new-value))
+                               {:id id :field field :arg-index arg-index
+                                :value new-value}))))
+                       before-index))
+          edited-by-id (into {} (map (juxt :id identity)) edits)
+          reconstructed
+          (walk/postwalk
+           (fn [node]
+             (if-let [{:keys [field value]}
+                      (and (map? node) (edited-by-id (:ifc/source-entity-id node)))]
+               (assoc node field value)
+               node))
+           before-geometries)]
+      (when (and (= (without-geometry imported) (without-geometry current))
+                 (seq edits) (= reconstructed after-geometries))
+        edits))))
+
+(defn schema-native-geometry-edit?
+  "True when an edited external document can be patched in its original STEP
+  geometry entities without regenerating its product graph."
+  [document]
+  (boolean (seq (geometry-direct-edits document))))
+
+(defn- patch-entity-arg [text id arg-index value]
+  (let [matcher (re-pattern (str "(?i)#" id "\\s*=\\s*[A-Z0-9_]+\\s*\\("))]
+    (if-let [prefix (re-find matcher text)]
+      (let [match-start (string/index-of text prefix)
+            body-start (+ match-start (count prefix))
+            body-end (entity-body-end text body-start)
+            args (when body-end
+                   (part21/split-top-level (subs text body-start body-end)))]
+        (if (and body-end (< arg-index (count args)))
+          (str (subs text 0 body-start)
+               (string/join "," (assoc (vec args) arg-index (part21/value value)))
+               (subs text body-end))
+          text))
+      text)))
+
+(defn- patch-direct-geometry-in-spf [document edits]
+  (reduce (fn [text {:keys [id arg-index value]}]
+            (patch-entity-arg text id arg-index value))
+          (:ifc/raw-spf document) edits))
+
 (def ^:private inverse-required-types
   #{:ifcproductdefinitionshape :ifcshaperepresentation
     :ifcpropertyset :ifcelementquantity :ifcmateriallayersetusage})
@@ -1397,6 +1473,8 @@
       (:ifc/raw-spf document)
       (if (and (:ifc/raw-spf document) (name-only-external-edit? document))
         (patch-root-names-in-spf document)
+        (if-let [edits (and (:ifc/raw-spf document) (geometry-direct-edits document))]
+          (patch-direct-geometry-in-spf document edits)
       (apply part21/file {:description (if-let [profile (:ifc/model-view document)]
                                          (mvd/header-description target-schema profile)
                                          (or (first (get-in document [:ifc/header :description]))
@@ -1405,7 +1483,7 @@
                           :author "KAMI" :org "kotoba-lang"}
              (if (seq (:ifc/raw-entities document))
                (hybrid-entities document)
-               (standard-entities document)))))))
+               (standard-entities document))))))))
 
 (defn rewrite-spf
   "Force standard-entity regeneration while retaining the imported schema."
@@ -1906,7 +1984,8 @@
 
 (defn- geometry-item [table item-ref]
   (let [item (referenced table item-ref)]
-    (case (:type item)
+    (some->
+     (case (:type item)
       :ifcextrudedareasolid
       {:kind :extruded-area-solid
        :profile (profile table (get-in item [:args 0]))
@@ -1948,7 +2027,8 @@
       :ifcfacetedbrep (faceted-brep table item)
       :ifcadvancedbrep (advanced-brep table item)
       (:ifctriangulatedfaceset :ifcpolygonalfaceset) (tessellated-face-set table item)
-      nil)))
+      nil)
+     (assoc :ifc/source-entity-id (:id item)))))
 
 (defn- geometry-items [table item-refs]
   (let [items (vec (keep #(geometry-item table %) item-refs))]
@@ -2721,7 +2801,7 @@
                       (integer? sample) :ifcinteger
                       (number? sample) :ifcreal
                       :else :ifclabel)))
-       (map? node) (dissoc node :id :container-id :filled-by)
+       (map? node) (dissoc node :id :container-id :filled-by :ifc/source-entity-id)
        (= :$ node) nil
        (= :notdefined node) nil
        :else node))
@@ -2856,3 +2936,56 @@
      (every? :roundtrip/semantic-lossless? (vals files))
      :corpus/opaque-lossless? (every? :roundtrip/opaque-lossless? (vals files))
      :corpus/lossless? (every? :roundtrip/lossless? (vals files))}))
+
+(defn- perturb-coordinate [coordinates]
+  (when (and (vector? coordinates) (vector? (first coordinates))
+             (number? (ffirst coordinates)))
+    (update-in coordinates [0 0] + 0.01)))
+
+(defn perturb-geometry
+  "Apply one small deterministic edit to a supported neutral geometry tree.
+  Boolean and collection operands are searched recursively, allowing clipped
+  Revit solids to edit their underlying swept solid. Returns nil when no
+  modeled editable form exists."
+  [geometry]
+  (when (map? geometry)
+    (case (:kind geometry)
+      :extruded-area-solid
+      (when (number? (:depth geometry)) (update geometry :depth + 0.01))
+      :revolved-area-solid
+      (when (number? (:angle geometry)) (update geometry :angle + 0.001))
+      :swept-disk-solid
+      (when (number? (:radius geometry)) (update geometry :radius + 0.001))
+      (:triangulated-face-set :polygonal-face-set)
+      (when-let [coordinates (perturb-coordinate (:coordinates geometry))]
+        (assoc geometry :coordinates coordinates))
+      :faceted-brep
+      (when (number? (get-in geometry [:faces 0 :bounds 0 :points 0 0]))
+        (update-in geometry [:faces 0 :bounds 0 :points 0 0] + 0.01))
+      :mapped-item
+      (if (number? (get-in geometry [:transform :origin 0]))
+        (update-in geometry [:transform :origin 0] + 0.01)
+        (when-let [source (perturb-geometry (:source geometry))]
+          (assoc geometry :source source)))
+      :boolean-result
+      (if-let [operand (perturb-geometry (:first-operand geometry))]
+        (assoc geometry :first-operand operand)
+        (when-let [operand (perturb-geometry (:second-operand geometry))]
+          (assoc geometry :second-operand operand)))
+      :collection
+      (loop [before [] [item & remaining] (:items geometry)]
+        (when item
+          (if-let [edited (perturb-geometry item)]
+            (assoc geometry :items (vec (concat before [edited] remaining)))
+            (recur (conj before item) remaining))))
+      nil)))
+
+(defn edit-first-geometry
+  "Edit the first supported product geometry, returning nil when none exists."
+  [document]
+  (loop [index 0]
+    (when (< index (count (:ifc/elements document)))
+      (if-let [geometry (perturb-geometry
+                         (get-in document [:ifc/elements index :geometry]))]
+        (assoc-in document [:ifc/elements index :geometry] geometry)
+        (recur (inc index))))))
