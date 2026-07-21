@@ -894,7 +894,8 @@
        (is (string/includes? output "IFCANNOTATION"))
        (is (string/includes? output "'Keep Me'"))
        (is (= 4.4 (get-in wall [:geometry :depth])))
-       (is (> (:ifc/raw-entity-count reimported) (:ifc/raw-entity-count document))))
+       (is (= (:ifc/raw-entity-count reimported) (:ifc/raw-entity-count document))
+           "schema-native scalar edits patch the source solid without appending a duplicate graph"))
      :cljs (is true)))
 
 (deftest official-wall-geometry-edit-is-semantically-lossless
@@ -908,6 +909,18 @@
               (->> (get-in report [:roundtrip/actual :ifc/elements])
                    (filter #(= "3ZYW59sxj8lei475l7EhLU" (:global-id %)))
                    first :geometry :depth))))
+     :cljs (is true)))
+
+(deftest generic-geometry-perturbation-reaches-revit-boolean-solids
+  #?(:clj
+     (let [text (slurp (io/file "test/fixtures/revit-wall.ifc"))
+           document (ifc/read-document text)
+           edited (ifc/edit-first-geometry document)
+           report (ifc/hybrid-roundtrip-report text (constantly edited))]
+       (is (not= (mapv :geometry (:ifc/elements document))
+                 (mapv :geometry (:ifc/elements edited))))
+       (is (:roundtrip/semantic-lossless? report))
+       (is (:roundtrip/opaque-lossless? report)))
      :cljs (is true)))
 
 (deftest hybrid-corpus-report-proves-semantic-and-opaque-entity-preservation

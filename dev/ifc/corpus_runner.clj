@@ -54,6 +54,9 @@
                  document))
         hybrid (ifc/hybrid-roundtrip-report text edit)
         edited-document (ifc/read-document (:roundtrip/output hybrid))
+        geometry-edit (ifc/edit-first-geometry document)
+        geometry-hybrid (when geometry-edit
+                          (ifc/hybrid-roundtrip-report text (constantly geometry-edit)))
         expected-georef (:expected/georeference fixture)
         georef (:ifc/georeference document)
         projected (when expected-georef
@@ -67,6 +70,19 @@
                 :hybrid-opaque-lossless? (:roundtrip/opaque-lossless? hybrid)
                 :hybrid-edit-observed?
                 (= edited-name (get-in edited-document [:ifc/elements 0 :name]))
+                :geometry-editable? (boolean geometry-edit)
+                :geometry-schema-native? (boolean
+                                          (and geometry-edit
+                                               (ifc/schema-native-geometry-edit?
+                                                geometry-edit)))
+                :geometry-semantic-lossless?
+                (some-> geometry-hybrid :roundtrip/semantic-lossless?)
+                :geometry-opaque-lossless?
+                (some-> geometry-hybrid :roundtrip/opaque-lossless?)
+                :geometry-edit-observed?
+                (when geometry-edit
+                  (not= (ifc/semantic-fingerprint document)
+                        (ifc/semantic-fingerprint geometry-edit)))
                 :opaque-entities (:roundtrip/opaque-input-count hybrid)
                 :georeference?
                 (when expected-georef
@@ -79,7 +95,11 @@
                    (:lossless? result)
                    (:hybrid-semantic-lossless? result)
                    (:hybrid-opaque-lossless? result)
-                   (:hybrid-edit-observed? result))
+                   (:hybrid-edit-observed? result)
+                   (or (not (:geometry-editable? result))
+                       (and (:geometry-semantic-lossless? result)
+                            (:geometry-opaque-lossless? result)
+                            (:geometry-edit-observed? result))))
       (throw (ex-info "external IFC conformance failed" result)))
     result))
 
@@ -102,4 +122,13 @@
           :corpus/hybrid-edit-lossless?
           (every? #(and (:hybrid-semantic-lossless? %)
                         (:hybrid-opaque-lossless? %)
-                        (:hybrid-edit-observed? %)) results)})))
+                        (:hybrid-edit-observed? %)) results)
+          :corpus/geometry-editable-files (count (filter :geometry-editable? results))
+          :corpus/geometry-schema-native-files
+          (count (filter :geometry-schema-native? results))
+          :corpus/geometry-edit-lossless?
+          (every? #(or (not (:geometry-editable? %))
+                       (and (:geometry-semantic-lossless? %)
+                            (:geometry-opaque-lossless? %)
+                            (:geometry-edit-observed? %)))
+                  results)})))
