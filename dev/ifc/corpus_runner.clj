@@ -103,19 +103,42 @@
       (throw (ex-info "external IFC conformance failed" result)))
     result))
 
+(def ^:private max-corpus-duration-ms
+  "Generous upper bound on total corpus round-trip time -- this exists to
+  catch a catastrophic (e.g. accidentally-quadratic) performance
+  regression, not to hold the parser to a tight budget, so it stays well
+  above observed timings across machines/CI runners."
+  30000)
+
+(defn- timed-verify-fixture [manifest fixture]
+  (let [started (System/nanoTime)
+        result (verify-fixture manifest fixture)
+        elapsed-ms (/ (- (System/nanoTime) started) 1.0e6)]
+    (assoc result :roundtrip-ms elapsed-ms)))
+
 (defn -main [& _]
   (let [manifest (edn/read-string (slurp manifest-path))
+        started (System/nanoTime)
         results (mapv (fn [fixture]
                         (try
-                          (verify-fixture manifest fixture)
+                          (timed-verify-fixture manifest fixture)
                           (catch Exception error
                             (throw (ex-info "external IFC fixture failed"
                                             {:name (:name fixture)
                                              :source/path (:source/path fixture)}
                                             error)))))
-                      (:remote-fixtures manifest))]
+                      (:remote-fixtures manifest))
+        total-ms (/ (- (System/nanoTime) started) 1.0e6)
+        slowest (apply max-key :roundtrip-ms results)]
+    (when (> total-ms max-corpus-duration-ms)
+      (throw (ex-info "external IFC corpus round-trip performance regression"
+                      {:total-ms total-ms :budget-ms max-corpus-duration-ms
+                       :slowest-file (:name slowest) :slowest-ms (:roundtrip-ms slowest)})))
     (prn {:corpus/source (:source/repository manifest)
           :corpus/commit (:source/commit manifest)
+          :corpus/total-roundtrip-ms total-ms
+          :corpus/slowest-file (:name slowest)
+          :corpus/slowest-roundtrip-ms (:roundtrip-ms slowest)
           :corpus/files results
           :corpus/products (reduce + (map :products results))
           :corpus/lossless? (every? :lossless? results)

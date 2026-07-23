@@ -78,3 +78,55 @@
                             :cardinality :prohibited}]}]})]
     (is (:ids.report/pass? (ids/validate model optional)))
     (is (:ids.report/pass? (ids/validate model prohibited)))))
+
+(deftest empty-and-unknown-values-do-not-satisfy-existence-only-requirements
+  ;; buildingSMART IDS 1.0 implementer corpus: an empty string or a
+  ;; logical unknown must be treated as "not set", not as a present value,
+  ;; when a requirement has no value restriction (existence check only).
+  (let [model (ifc/exchange-document
+               {:project {:global-id "project" :name "IDS Tower"}
+                :elements
+                [{:id 20 :global-id "wall-empty" :kind :wall :name "Wall"
+                  :property-sets
+                  {"Foo_Bar" {:properties {"Foo" {:value "" :value-type :ifclabel}}}}}
+                 {:id 21 :global-id "wall-unknown" :kind :wall :name "Wall"
+                  :property-sets
+                  {"Foo_Bar" {:properties {"Foo" {:value :u :value-type :ifclogical}}}}}
+                 {:id 22 :global-id "wall-set" :kind :wall :name "Wall"
+                  :property-sets
+                  {"Foo_Bar" {:properties {"Foo" {:value "Bar" :value-type :ifclabel}}}}}]})
+        requirements (ids/document
+                      {:title "Foo must be set"
+                       :specifications
+                       [{:name "Foo present and non-empty"
+                         :applicability [{:type :entity :name "IFCWALL"}]
+                         :requirements
+                         [{:type :property :property-set "Foo_Bar" :name "Foo"}]}]})
+        report (ids/validate model requirements)
+        failed-ids (set (map :ids.issue/global-id (:ids.report/issues report)))]
+    (is (contains? failed-ids "wall-empty"))
+    (is (contains? failed-ids "wall-unknown"))
+    (is (not (contains? failed-ids "wall-set")))))
+
+(deftest multiple-xs-pattern-facets-combine-with-or
+  ;; buildingSMART IDS 1.0 implementer corpus: xs:restriction with more
+  ;; than one xs:pattern facet matches if the value satisfies ANY of them.
+  (let [model (ifc/exchange-document
+               {:project {:global-id "project" :name "IDS Tower"}
+                :elements
+                [{:id 30 :global-id "wall-upper" :kind :wall :name "AB12"}
+                 {:id 31 :global-id "wall-lower" :kind :wall :name "ab12"}
+                 {:id 32 :global-id "wall-neither" :kind :wall :name "no-match"}]})
+        requirements (ids/document
+                      {:title "Name matches either case pattern"
+                       :specifications
+                       [{:name "Name is AB12-style or ab12-style"
+                         :applicability [{:type :entity :name "IFCWALL"}]
+                         :requirements
+                         [{:type :attribute :name "Name"
+                           :value {:patterns ["[A-Z]{2}[0-9]{2}" "[a-z]{2}[0-9]{2}"]}}]}]})
+        report (ids/validate model requirements)
+        failed-ids (set (map :ids.issue/global-id (:ids.report/issues report)))]
+    (is (not (contains? failed-ids "wall-upper")))
+    (is (not (contains? failed-ids "wall-lower")))
+    (is (contains? failed-ids "wall-neither"))))

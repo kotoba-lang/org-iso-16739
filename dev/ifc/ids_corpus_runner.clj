@@ -1,12 +1,21 @@
 (ns ifc.ids-corpus-runner
-  "Run the pinned buildingSMART IDS 1.0 implementer corpus against IFC data."
+  "Run the buildingSMART IDS 1.0 implementer test corpus (Documentation/
+  ImplementersDocumentation/TestCases in github.com/buildingSMART/IDS)
+  against IFC data. Unlike `ifc.corpus-runner`, this does not fetch or pin
+  a specific commit itself -- callers point BUILDINGSMART_IDS_TEST_CASES
+  (or the first CLI arg) at a local checkout, so `expected-cases` reflects
+  whatever revision was last verified here (last verified 2026-07-23
+  against a fresh clone of the `development` branch: 291 cases, 0
+  failures) and will legitimately drift as buildingSMART adds cases
+  upstream -- a count mismatch alone is not a regression signal, only the
+  `:ids-corpus/failed` count is."
   (:require [clojure.java.io :as io]
             [clojure.string :as string]
             [ifc.core :as ifc]
             [ifc.ids :as ids]
             [ifc.ids.xml :as xml]))
 
-(def expected-cases 287)
+(def expected-cases 291)
 
 (defn- ids-case? [file]
   (and (.isFile file)

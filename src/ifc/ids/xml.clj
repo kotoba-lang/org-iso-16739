@@ -67,7 +67,9 @@
            (let [name (node-name facet) value (attribute facet "value")]
              (cond
                (= "enumeration" name) (update result :values (fnil conj #{}) value)
-               (= "pattern" name) (assoc result :pattern value)
+               ;; xs:restriction combines multiple xs:pattern facets with
+               ;; OR -- accumulate all of them rather than overwriting.
+               (= "pattern" name) (update result :patterns (fnil conj []) value)
                (contains? numeric-facets name)
                (assoc result (get numeric-facets name) (parse-number value))
                :else result)))
@@ -157,8 +159,10 @@
              (str "<xs:restriction base=\"xs:string\">"
                   (apply str (map #(str "<xs:enumeration value=\"" (escape-xml %)
                                         "\"/>") (sort-by str (:values value))))
-                  (when-let [pattern (:pattern value)]
-                    (str "<xs:pattern value=\"" (escape-xml pattern) "\"/>"))
+                  (apply str
+                         (map #(str "<xs:pattern value=\"" (escape-xml %) "\"/>")
+                              (cond-> (vec (:patterns value)) (:pattern value)
+                                (conj (:pattern value)))))
                   (apply str
                          (keep (fn [[key xml-name]]
                                  (when (contains? value key)
