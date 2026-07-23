@@ -80,15 +80,22 @@
   [actual value-restriction]
   (if (nil? value-restriction)
     true
-    (let [{:keys [value values pattern min-inclusive max-inclusive
+    (let [{:keys [value values pattern patterns min-inclusive max-inclusive
                   min-exclusive max-exclusive length min-length max-length]}
           (restriction value-restriction)
+          ;; xs:restriction combines multiple xs:pattern facets with OR --
+          ;; a value need only match one of them. `:pattern` (singular) and
+          ;; `:patterns` (a collection) are both accepted so existing
+          ;; single-pattern callers keep working unchanged.
+          all-patterns (cond-> (vec patterns) pattern (conj pattern))
           text (when (some? actual) (str actual))]
       (and (if (contains? (restriction value-restriction) :value)
              (values-equivalent? actual value) true)
            (if (seq values) (boolean (some #(values-equivalent? actual %) values)) true)
-           (if pattern (and text (boolean (re-matches (re-pattern pattern)
-                                                       (lexical-value actual)))) true)
+           (if (seq all-patterns)
+             (and text (boolean (some #(re-matches (re-pattern %) (lexical-value actual))
+                                      all-patterns)))
+             true)
            (if (some? min-inclusive) (numeric-bound? >= actual min-inclusive) true)
            (if (some? max-inclusive) (numeric-bound? <= actual max-inclusive) true)
            (if (some? min-exclusive) (numeric-bound? > actual min-exclusive) true)
@@ -261,7 +268,10 @@
             (some #(matches-restriction?
                     (normalized-property-value element property %)
                     (:value facet)) values))
-           true))))
+           ;; no value restriction: existence alone is not enough per IDS --
+           ;; an empty string or a logical unknown is treated as "not set"
+           ;; and must not satisfy the requirement.
+           (boolean (some valid-attribute-value? values))))))
 
 (defn- material-values [element]
   (let [assignment (or (:material element) (get-in element [:type-object :material]))]
