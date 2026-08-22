@@ -1,6 +1,6 @@
 (ns ifc.ids-xml-test
   (:require [clojure.string :as string]
-            [clojure.test :refer [deftest is]]
+            [clojure.test :refer [deftest is testing]]
             [ifc.ids :as ids]
             [ifc.ids-test :as fixture]
             [ifc.ids.xml :as ids-xml]))
@@ -20,9 +20,34 @@
     (is (= "wall-fail" (get-in report [:ids.report/issues 0 :ids.issue/global-id])))))
 
 (deftest rejects-doctype-and-external-entity-input
-  (is (thrown? Exception
-               (ids-xml/read-xml
-                "<?xml version='1.0'?><!DOCTYPE ids [<!ENTITY xxe SYSTEM 'file:///etc/passwd'>]><ids>&xxe;</ids>"))))
+  ;; `(thrown? Exception …)` accepts ANY exception, and that is not enough
+  ;; here. Measured 2026-08-24 by the mutation harness in com-junkawasaki/root:
+  ;; turning `disallow-doctype-decl` OFF — which reopens the XXE surface this
+  ;; test exists to close — left this test green, because the undefined entity
+  ;; then failed downstream and threw anyway. The test proved that *something*
+  ;; rejected the input, not that the PARSER did.
+  ;;
+  ;; The parser refusing a DOCTYPE raises SAXParseException. Anything later
+  ;; raises ExceptionInfo. So the type is the discriminator, and a bare DOCTYPE
+  ;; with no entity at all is the input that isolates it: with the feature on
+  ;; the parser refuses it; with the feature off it parses and a later stage
+  ;; complains instead.
+  (testing "the PARSER refuses a DOCTYPE, rather than something downstream"
+    (is (thrown? org.xml.sax.SAXParseException
+                 (ids-xml/read-xml "<?xml version='1.0'?><!DOCTYPE ids><ids/>"))))
+
+  ;; ⚠ The `external-general-entities` and `external-parameter-entities`
+  ;; settings alongside it are defence in depth that CANNOT be exercised
+  ;; independently while DOCTYPE is banned: declaring an entity needs a
+  ;; DOCTYPE, and the parser refuses that first. Measured — turning
+  ;; external-general-entities back ON leaves this suite green. That is not
+  ;; coverage; it is a reachability limit, and saying so is better than
+  ;; letting two green assertions imply three protections are checked.
+
+  (testing "and an external entity reference is refused too"
+    (is (thrown? org.xml.sax.SAXParseException
+                 (ids-xml/read-xml
+                  "<?xml version='1.0'?><!DOCTYPE ids [<!ENTITY xxe SYSTEM 'file:///etc/passwd'>]><ids>&xxe;</ids>")))))
 
 (deftest writes-and-reads-multiple-or-combined-patterns
   (let [source
