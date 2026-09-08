@@ -1,5 +1,5 @@
 (ns ifc.ids-xml-test
-  (:require [clojure.string :as string]
+  (:require [kotoba.lang.text :as string]
             [clojure.test :refer [deftest is testing]]
             [ifc.ids :as ids]
             [ifc.ids-test :as fixture]

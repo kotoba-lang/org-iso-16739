@@ -1,7 +1,7 @@
 (ns ifc.corpus-runner
   "Fetch and verify pinned, large external IFC conformance fixtures."
   (:require [clojure.edn :as edn]
-            [clojure.string :as string]
+            [kotoba.lang.text :as string]
             [ifc.core :as ifc])
   (:import [java.net URI]
            [java.nio.charset StandardCharsets]

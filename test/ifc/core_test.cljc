@@ -1,5 +1,5 @@
 (ns ifc.core-test
-  (:require [clojure.string :as string]
+  (:require [kotoba.lang.text :as string]
             [clojure.test :refer [deftest is]]
             #?(:clj [clojure.edn :as edn])
             #?(:clj [clojure.java.io :as io])
