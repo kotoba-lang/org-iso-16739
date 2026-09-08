@@ -10,7 +10,7 @@
   upstream -- a count mismatch alone is not a regression signal, only the
   `:ids-corpus/failed` count is."
   (:require [clojure.java.io :as io]
-            [clojure.string :as string]
+            [kotoba.lang.text :as string]
             [ifc.core :as ifc]
             [ifc.ids :as ids]
             [ifc.ids.xml :as xml]))

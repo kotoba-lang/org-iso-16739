@@ -1,6 +1,6 @@
 (ns ifc.ids.xml
   "Secure IDS 1.0 XML transport for the portable `ifc.ids` contract."
-  (:require [clojure.string :as string]
+  (:require [kotoba.lang.text :as string]
             [ifc.ids :as ids])
   (:import [java.io StringReader]
            [javax.xml.parsers DocumentBuilderFactory]
@@ -88,7 +88,7 @@
 (defn- parse-facet [node requirement?]
   (let [type (case (node-name node)
                "partOf" :part-of
-               (keyword (string/lower-case (node-name node))))
+               (keyword (string/lower (node-name node))))
         cardinality (if requirement? (parse-cardinality node) :required)]
     (case type
       :entity (assoc (parse-entity node) :cardinality cardinality)
@@ -100,7 +100,7 @@
                  :property-set (parse-ids-value (child node "propertySet"))
                  :name (parse-ids-value (child node "baseName"))
                  :value (parse-ids-value (child node "value"))
-                 :data-type (some-> (attribute node "dataType") string/lower-case keyword)}
+                 :data-type (some-> (attribute node "dataType") string/lower keyword)}
       :classification {:type :classification :cardinality cardinality
                        :value (parse-ids-value (child node "value"))
                        :system (parse-ids-value (child node "system"))}
@@ -193,7 +193,7 @@
       :property
       (str "<property" cardinality
            (when-let [data-type (:data-type facet)]
-             (str " dataType=\"" (string/upper-case (name data-type)) "\"")) ">"
+             (str " dataType=\"" (string/upper (name data-type)) "\"")) ">"
            (write-ids-value "propertySet" (:property-set facet))
            (write-ids-value "baseName" (:name facet))
            (write-ids-value "value" (:value facet)) "</property>")

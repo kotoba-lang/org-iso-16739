@@ -2,7 +2,7 @@
   "Portable buildingSMART IDS 1.0 validation over an `ifc.core` exchange
   document. XML transport is isolated in `ifc.ids.xml`; this namespace owns
   deterministic facet evaluation and reports."
-  (:require [clojure.string :as string]))
+  (:require [kotoba.lang.text :as string]))
 
 (def contract-version 1)
 (def facet-types #{:entity :attribute :property :classification :material :part-of})
@@ -53,7 +53,7 @@
   (cond
     (true? value) "true"
     (false? value) "false"
-    (keyword? value) (string/upper-case (name value))
+    (keyword? value) (string/upper (name value))
     (nil? value) nil
     :else (str value)))
 
@@ -347,7 +347,7 @@
 (defn- entity-name [element]
   (let [value (-> (or (:ifc/entity-type element) (:ifc/type element)
                       (:type element) (:kind element))
-                  name string/upper-case)]
+                  name string/upper)]
     (if (string/starts-with? value "IFC") value (str "IFC" value))))
 
 (declare attribute-value)
@@ -369,7 +369,7 @@
 
 (defn- predefined-lexical [value]
   (cond
-    (keyword? value) (string/upper-case (name value))
+    (keyword? value) (string/upper (name value))
     (some? value) (str value)
     :else nil))
 
@@ -396,7 +396,7 @@
                              (when (some? (:name facet)) {:value (:name facet)}))
         name-restriction (if (contains? name-restriction :value)
                            (update name-restriction :value
-                                   #(string/upper-case (str %)))
+                                   #(string/upper (str %)))
                            name-restriction)]
     (filter (fn [[attribute _]]
               (let [canonical (get {"GLOBALID" "GlobalId"
@@ -405,14 +405,14 @@
                                     "OBJECTTYPE" "ObjectType"
                                     "LAYERSETNAME" "LayerSetName"}
                                    attribute
-                                   (string/capitalize (string/lower-case attribute)))]
+                                   (string/capitalize (string/lower attribute)))]
                 (or (matches-restriction? attribute name-restriction)
                     (matches-restriction? canonical name-restriction))))
             (attribute-pairs element))))
 
 (defn- attribute-value [element attribute-name]
   (some (fn [[attribute value]]
-          (when (= attribute (string/upper-case (str attribute-name))) value))
+          (when (= attribute (string/upper (str attribute-name))) value))
         (attribute-pairs element)))
 
 (declare facet-matches?)

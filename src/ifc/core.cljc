@@ -1,7 +1,7 @@
 (ns ifc.core
   "IFC 4.3 exchange over the shared kotoba-lang/step serializer."
   (:require [clojure.set :as set]
-            [clojure.string :as string]
+            [kotoba.lang.text :as string]
             [clojure.walk :as walk]
             [brep.spline :as spline]
             [ifc.mvd :as mvd]
@@ -2794,7 +2794,7 @@
             (let [links (filter #(= (:id member)
                                     (ref-id (get-in % [:args 4]))) structural-links)
                   by-end (into {} (map (fn [relation]
-                                         [(string/upper-case
+                                         [(string/upper
                                            (str (get-in relation [:args 2])))
                                           (ref-id (get-in relation [:args 5]))])) links)
                   start-id (get by-end "START")

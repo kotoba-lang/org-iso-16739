@@ -1,5 +1,5 @@
 (ns ifc.mvd-test
-  (:require [clojure.string :as string]
+  (:require [kotoba.lang.text :as string]
             [clojure.test :refer [deftest is testing]]
             [ifc.core :as ifc]
             [ifc.mvd :as mvd]))

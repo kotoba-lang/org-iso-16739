@@ -1,6 +1,6 @@
 (ns ifc.mvd
   "IFC exchange/model-view declaration profiles over Part 21 headers."
-  (:require [clojure.string :as string]))
+  (:require [kotoba.lang.text :as string]))
 
 (def profiles
   {:coordination-view-2
@@ -13,7 +13,7 @@
    {:schemas #{"IFC4X3" "IFC4X3_ADD2"} :token "AlignmentBasedReferenceView"}})
 
 (defn- normalized-token [value]
-  (some-> value string/lower-case (string/replace #"[^a-z0-9]" "")))
+  (some-> value string/lower (string/replace #"[^a-z0-9]" "")))
 
 (defn detect-profile
   "Detect a known IFC model-view declaration from Part 21 descriptions."
