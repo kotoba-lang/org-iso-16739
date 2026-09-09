@@ -9,7 +9,7 @@
          :git/sha "351a5c1ecd4e068b6384ddfba8ad72f48f7a8c74"}}
  :aliases {:test {:extra-paths ["test"]
                   :extra-deps {io.github.cognitect-labs/test-runner
-                               {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
+                               {:git/tag "v0.5.1" :git/sha "dfb30dd6605cb6c0efc275e1df1736f6e90d4d73"}}
                   :main-opts ["-m" "cognitect.test-runner"]}
            :lint {:replace-deps {clj-kondo/clj-kondo {:mvn/version "2024.11.14"}}
                   :main-opts ["-m" "clj-kondo.main" "--lint" "src" "test" "dev"
