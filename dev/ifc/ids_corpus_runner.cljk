@@ -48,7 +48,7 @@
                  (System/getenv "BUILDINGSMART_IDS_TEST_CASES"))
         _ (when-not path
             (throw (ex-info "IDS corpus path is required"
-                            {:usage "clojure -M:ids-corpus -- /path/to/TestCases"})))
+                            {:usage "kbb -M:ids-corpus -- /path/to/TestCases"})))
         root (io/file path)
         _ (when-not (.isDirectory root)
             (throw (ex-info "IDS corpus path is not a directory" {:path path})))
