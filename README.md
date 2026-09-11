@@ -43,7 +43,7 @@ clean and hybrid rewrites.
 The repository pins official buildingSMART Reference View fixtures and larger
 IFC4.3 PCERT Architecture, HVAC, and Structural scenes with source commit,
 license attribution, expected product counts, and SHA-256 digests. Run
-`clojure -M:external-corpus` to download and verify the large corpus.
+`kbb -M:external-corpus` to download and verify the large corpus.
 
 Imported IFC2X3, IFC4, and IFC4.3 documents retain their source schema and raw
 entity graph. An unchanged document is returned byte-for-byte. When a modeled
@@ -74,7 +74,7 @@ buildingSMART IDS 1.0 implementer corpus at commit
 `4949bfcba2cd324f76b480f6f85e0b25dc7fa98f`. Run the reproducible gate with:
 
 ```sh
-clojure -M:ids-corpus -- /path/to/IDS/Documentation/ImplementersDocumentation/TestCases
+kbb -M:ids-corpus -- /path/to/IDS/Documentation/ImplementersDocumentation/TestCases
 ```
 
 The command fails if the corpus does not contain exactly 287 paired cases or
@@ -93,7 +93,7 @@ responsibility of the independent external validator gate.
 
 ## External schema validation
 
-`clojure -M:external-validator` generates a representative IFC4.3 exchange and
+`kbb -M:external-validator` generates a representative IFC4.3 exchange and
 validates it together with the pinned official fixtures using IfcOpenShell
 0.8.5 syntax, schema, and EXPRESS WHERE-rule checks. The runner uses an
 isolated `uv` environment and exits non-zero for any schema error. It also
