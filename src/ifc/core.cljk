@@ -1,8 +1,8 @@
 (ns ifc.core
   "IFC 4.3 exchange over the shared kotoba-lang/step serializer."
-  (:require [clojure.set :as set]
+  (:require [kotoba.lang.coll :as set]
             [kotoba.lang.text :as string]
-            [clojure.walk :as walk]
+            [kotoba.lang.coll :as walk]
             [brep.spline :as spline]
             [ifc.mvd :as mvd]
             [iso-10303.part21 :as part21]
