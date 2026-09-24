@@ -1,10 +1,9 @@
 (ns ifc.corpus-runner
   "Fetch and verify pinned, large external IFC conformance fixtures."
-  (:require [kotoba.lang.edn :as edn]
+  (:require [kotoba.http.form-urlencoded :as form-urlencoded] [kotoba.bytes :as kbytes] [kotoba.lang.edn :as edn]
             [kotoba.lang.text :as string]
             [ifc.core :as ifc])
   (:import [java.net URI]
-           [java.nio.charset StandardCharsets]
            [java.security MessageDigest]))
 
 (def manifest-path "test/fixtures/external/manifest.edn")
@@ -17,7 +16,7 @@
 
 (defn- encoded-path [path]
   (string/join "/" (map #(string/replace
-                           (java.net.URLEncoder/encode % "UTF-8") "+" "%20")
+                           (form-urlencoded/form-encode %) "+" "%20")
                          (string/split path #"/"))))
 
 (defn- fixture-url [manifest fixture]
@@ -37,7 +36,7 @@
       (throw (ex-info "external IFC fixture checksum mismatch"
                       {:name (:name fixture) :expected (:sha256 fixture)
                        :actual digest :url url})))
-    {:url url :bytes bytes :text (String. bytes StandardCharsets/UTF_8)}))
+    {:url url :bytes bytes :text (kbytes/utf8-string bytes)}))
 
 (defn- near? [expected actual]
   (<= (Math/abs (- (double expected) (double actual)))

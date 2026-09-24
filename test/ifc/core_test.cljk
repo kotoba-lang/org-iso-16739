@@ -2,7 +2,7 @@
   (:require [kotoba.lang.text :as string]
             [kotoba.test :refer [deftest is]]
             #?(:clj [kotoba.lang.edn :as edn])
-            #?(:clj [clojure.java.io :as io])
+            #?(:clj [kotoba.io :as io])
             [ifc.core :as ifc]))
 
 (deftest spf-round-trip
