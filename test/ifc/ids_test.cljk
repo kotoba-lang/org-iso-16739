@@ -1,5 +1,5 @@
 (ns ifc.ids-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [kotoba.test :refer [deftest is]]
             [ifc.core :as ifc]
             [ifc.ids :as ids]))
 
