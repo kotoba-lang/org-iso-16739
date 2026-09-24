@@ -6,7 +6,7 @@
             [brep.spline :as spline]
             [ifc.mvd :as mvd]
             [iso-10303.part21 :as part21]
-            #?(:clj [clojure.edn :as edn] :cljs [cljs.reader :as edn])))
+            #?(:clj [kotoba.lang.edn :as edn] :cljs [cljs.reader :as edn])))
 
 (def schema "IFC4X3_ADD2")
 (def contract-version 1)

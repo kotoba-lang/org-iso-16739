@@ -1,6 +1,6 @@
 (ns ifc.external-validator-runner
   "Generate representative IFC and run pinned IfcOpenShell schema/WHERE rules."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [ifc.core :as ifc]
             [ifc.corpus-runner :as corpus])
   (:import [java.nio.file Files]
