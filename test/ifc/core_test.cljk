@@ -696,7 +696,7 @@
     (is (= mapped (ifc/model-to-map-coordinate georeference model)))
     (is (= engineering (ifc/map-to-engineering-coordinate georeference mapped)))
     (is (= model (ifc/map-to-model-coordinate georeference mapped)))
-    (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+    (is (thrown? js/Error
                  (ifc/map-to-engineering-coordinate
                   (assoc georeference :factor-y 0.0) mapped)))))
 
